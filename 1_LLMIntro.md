@@ -1,7 +1,7 @@
-# Basics of the transformer architecture
+# LLM basics
 These notes follow the YouTube lecture notes available [here](https://www.youtube.com/playlist?list=PLPTV0NXA_ZSgsLAr8YCgCwhPIJNNtexWu).
 
-***Transformers*** lie at the core or *some* ***Large Language Models***. However, not all transformers are LLMs (e.g., they can serve as image recognition and classification tools) and not all LLMs are transformers (LLMs can be based on, e.g., convolutional or recurrent neural networks). See the [foundational paper on transformers](https://arxiv.org/abs/1706.03762) for in-depth info on transformers.
+***Transformers*** lie at the core or *some* ***large language models (LLM)***. However, not all transformers are LLMs (e.g., they can serve as image recognition and classification tools) and not all LLMs are transformers (LLMs can be based on, e.g., convolutional or recurrent neural networks). See the [foundational paper on transformers](https://arxiv.org/abs/1706.03762) for in-depth info on transformers.
 
 
 ## Basics
@@ -20,7 +20,7 @@ This is a technique used to model the semantic closeness of two words and the im
 
 
 ## Evolutions of the transformer architecture
-### Bidirectional Encoder Representations of Transformers (BERT)
+### Bidirectional Encoder Representations of Transformers (BERTs)
 To predict hidden words in a given sentence, the following steps are taken:
 1. The model receives randomly hidden ("masked") words during training
 2. Same tokenization-encoding-(i.e., vector embedding)-decoding steps as above
@@ -29,7 +29,7 @@ To predict hidden words in a given sentence, the following steps are taken:
 The model is good at predicting a word missing from *any location* of a text. The model is *bidirectional*, meaning it looks at the text both from left to right and viceversa: that's why BERTs are good at understanding the context a word is placed in and are used for *sentiment analysis*.
 
 
-### Generative Pre-trained Transformers (GPT)
+### Generative Pre-trained Transformers (GPTs)
 To predict hidden words in a given sentence, the following steps are taken:
 1. Tokenization
 2. Decoding to predict the missing word without previous encoding
