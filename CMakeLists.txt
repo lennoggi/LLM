@@ -5,7 +5,7 @@ project(LLM VERSION 1.0.0.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-add_executable(LLM Main.cc Encode.cc)
+add_executable(LLM Main.cc Vocabulary.cc)
 target_include_directories(LLM PRIVATE ${CMAKE_SOURCE_DIR}/include)
 
 add_custom_target(symlink_infile ALL
