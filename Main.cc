@@ -1,37 +1,57 @@
-#include <cassert>
 #include <iostream>
 #include <fstream>
 #include <sstream>
 
-#include "Vocabulary.hh"
+#include "Tokenizer.hh"
 #include "Parameters.hh"
 
 using namespace std;
 
 
 int main() {
-    ifstream infile(INFILE, ifstream::in);
+    ifstream infile(INFILE_TRAINING, ifstream::in);
 
     if (infile.is_open()) {
-        ostringstream oss;
-        oss << infile.rdbuf();
-        const auto &voc = vocabulary_t(oss.str());
+        /* Encode the input training text into a token-to-ID and an ID-to-token
+         * vocabularies and print the vocabularies                              */
+        ostringstream training_text_ss;
+        training_text_ss << infile.rdbuf();
+        auto tokenizer = tokenizer_t(training_text_ss.str());
 
-        for (const auto &token : voc.tokens) {
-            cout << token << endl;
+        cout << "======================" << endl
+             << "Token-to-ID vocabulary" << endl
+             << "======================" << endl;
+
+        for (const auto &[token, id] : tokenizer.vocab_token2id) {
+            cout << token << "\t" << id << endl;
         }
 
-        for (const auto &[token, tokenID] : voc.tokens_hashmap) {
-            cout << token << "\t" << tokenID << endl;
+        cout << endl
+             << "======================" << endl
+             << "ID-to-token vocabulary" << endl
+             << "======================" << endl;
+
+        for (const auto &[id, token] : tokenizer.vocab_id2token) {
+            cout << id << "\t" << token << endl;
         }
 
-        const auto ntokens = voc.tokens.size();
-        cout << "There are " << ntokens << " unique tokens in the input text" << endl;
-        assert(voc.tokens_hashmap.size() == ntokens);
+        cout << endl << "---------------------------------------------------------------------------------" << endl << endl;
+
+
+        // Test the encode and decode methods onto a user-specified input text
+        string input_text(INPUT_TEXT);
+        const auto &tokens = tokenizer.encode(input_text);
+
+        for (const auto &token : tokens) {
+            cout << token << " ";
+        }
+
+        const auto &input_text_decoded = tokenizer.decode(tokens);
+        cout << endl << input_text_decoded << endl;
     }
 
     else {
-        cerr << "Error opening file '" << INFILE << "'" << endl;
+        cerr << "Error opening file '" << INFILE_TRAINING << "'" << endl;
         return 1;
     }
 
