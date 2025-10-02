@@ -6,5 +6,7 @@ Building a large language model (LLM) from scratch
 mkdir build
 cd build
 cmake ..
-cmake --build .
+cmake --build -DEXE=<executable_name>.
 ```
+
+If `-DEXE` is not passed, a default (`llm`) will be used.
