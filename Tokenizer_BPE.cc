@@ -13,10 +13,10 @@
 using namespace std;
 
 
-/* ============================================================================
- * Constructor building a map relating each subword in the training text to how
- * many times that subword occurs in the traning text
- * ============================================================================ */
+/* ===========================================================================
+ * Constructor building a map relating each subword token in the training text
+ * to how many times that subword occurs in the traning text
+ * ===========================================================================  */
 tokenizer_bpe_t::tokenizer_bpe_t(const string &training_text,
                                  const size_t &nmerges) {
     /* ----------------------------------------------------------------
@@ -182,44 +182,54 @@ tokenizer_bpe_t::tokenizer_bpe_t(const string &training_text,
 
 
     /* ------------------------------------------------------------------------
-     * 3. Loop over the words list and link each subword to a unique integer ID
-     * and its frequency through a hash map
+     * 3. Loop over the words list and link each token (=subword) to a unique
+     *    integer ID through a hash map (as well as its inverse map)
      * ------------------------------------------------------------------------ */
     size_t id = 0;
 
     for (const auto &word_strvec : words_list) {
-        for (const auto &subword : word_strvec) {
-            /* Try adding the subword to the token-to-ID-and-frequency
-             * vocabulary with an initial frequency of 1; if that fails, that
-             * means the subword is already in the vocabulary, so increment its
-             * frequency by 1.                                                  */
-            if ((this->vocab_token2idfreq).emplace(subword, pair{id, 1}).second) {
+        for (const auto &token : word_strvec) {
+            /* Try inserting the token into the token-to-ID vocabulary (O(1) for
+             * token lookup in tokenizer_BPE_t::encode()); this will only
+             * succeed if the token is not in the vocabulary yet, since the
+             * tokens are the keys in the map and keys are unique               */
+            if ((this->vocab_token2id).emplace(token, id).second) {
                 ++id;
             } else {
-                try {
-                    (this->vocab_token2idfreq).at(subword).second += 1;
-                } catch (const exception &e) {
-                    ostringstream exception_ss;
-                    exception_ss << "Failed to access the subwords->frequency map at key '" << subword <<
-                        "'. This key should exist, please check the code (exception: \"" << e.what() << "\")." << endl;
-                    throw runtime_error(exception_ss.str());
-                }
+                #if (VERBOSE)
+                cout << "Skipping repeated token '" << token
+                     << "' while creating the token-to-ID vocabulary" << endl;
+                #endif
             }
         }
     }
 
     /* Add extra IDs to handle unknown and end-of-text (useful when training
      * with multiple text sources) tokens (set frequencies to 1)                */
-    const auto original_vocab_size = (this->vocab_token2idfreq).size();
-    (this->unk) = {"<|unknown|>",     {original_vocab_size,     1}};
-    (this->eot) = {"<|end-of-text|>", {original_vocab_size + 1, 1}};
+    const auto original_vocab_size = (this->vocab_token2id).size();
+    (this->unk) = {"<|unknown|>",     original_vocab_size};
+    (this->eot) = {"<|end-of-text|>", original_vocab_size + 1};
 
-    if (not (this->vocab_token2idfreq).emplace(this->unk).second) {
+    if (not (this->vocab_token2id).emplace(this->unk).second) {
         throw runtime_error("Insertion of 'unknown' token failed");
     }
 
-    if (not (this->vocab_token2idfreq).emplace(this->eot).second) {
+    if (not (this->vocab_token2id).emplace(this->eot).second) {
         throw runtime_error("Insertion of 'end-of-text' token failed");
+    }
+
+    /* Build the ID-to-subword vocabulary for fast (O(1)) ID lookup in
+     * tokenizer_BPE_t::decode()                                                */
+    (this->vocab_id2token).reserve((this->vocab_token2id).size());
+
+    for (const auto &[token, id] : (this->vocab_token2id)) {
+        if (not (this->vocab_id2token).emplace(id, token).second) {
+            ostringstream exception_ss;
+            exception_ss << "Unexpected repetition of element [" << id << ", " << token
+                         << "] in the ID-to-token vocabulary. This may happen if ID " << id
+                         << " is not unique in the token-to-ID vocabulary.";
+            throw runtime_error(exception_ss.str());
+        }
     }
 }
 

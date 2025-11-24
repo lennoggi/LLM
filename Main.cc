@@ -55,12 +55,21 @@ int main() {
         auto tokenizer_bpe = tokenizer_bpe_t(training_text, NMERGES);
 
         cout << endl
-             << "===================================================================" << endl
-             << "BPE tokenizer: subwords->IDs,frequency after " << NMERGES << " subword merges" << endl
-             << "===================================================================" << endl;
+             << "==========================" << endl
+             << "BPE tokenizer: token-to-ID" << endl
+             << "==========================" << endl;
 
-        for (const auto &[subword, id_freq] : tokenizer_bpe.vocab_token2idfreq) {
-            cout << subword << "\t" << id_freq.first << "\t" << id_freq.second << endl;
+        for (const auto &[token, id] : tokenizer_bpe.vocab_token2id) {
+            cout << token << "\t" << id << endl;
+        }
+
+        cout << endl
+             << "=====================================" << endl
+             << "BPE tokenizer: ID-to-token vocabulary" << endl
+             << "=================u===================" << endl;
+
+        for (const auto &[id, token] : tokenizer_bpe.vocab_id2token) {
+            cout << id << "\t" << token << endl;
         }
     }
 
