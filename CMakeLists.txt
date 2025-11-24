@@ -5,19 +5,18 @@ project(LLM VERSION 1.0.0.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+set(EXE "llm")
 
-# Set the executable name
-if (NOT DEFINED EXE)
-    set(EXE "llm" CACHE STRING "Name of the executable")
-endif()
-
-message(STATUS "The executable will be built as '${EXE}'")
-
-
-add_executable(${EXE} Main.cc Tokenizer.cc)
+add_executable(${EXE} Main.cc Tokenizer.cc Tokenizer_BPE.cc)
 target_include_directories(${EXE} PRIVATE ${CMAKE_SOURCE_DIR}/include)
 
 add_custom_target(symlink_infile ALL
     COMMAND ${CMAKE_COMMAND} -E create_symlink ${CMAKE_SOURCE_DIR}/Input_files ${CMAKE_BINARY_DIR}/Input_files
     COMMENT "Symlinking input files into the build directory"
+)
+
+set(CMAKE_INSTALL_PREFIX ${CMAKE_SOURCE_DIR}/install)
+
+install(TARGETS ${EXE}
+        RUNTIME DESTINATION bin
 )

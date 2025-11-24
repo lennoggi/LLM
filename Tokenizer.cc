@@ -5,7 +5,7 @@
 #include <regex>
 #include <algorithm>
 
-#include "Tokenizer.hh"
+#include "Types.hh"
 #include "Parameters.hh"
 
 using namespace std;
@@ -24,8 +24,8 @@ tokenizer_t::tokenizer_t(const string &training_text) {
     size_t id = 0;
 
     while (tokens_it != end) {
-        /* Make all tokens lowercase to avoid duplicating them if the same
-         * word appears multiple times with different cases                 */
+        /* Make all tokens lowercase to avoid duplicating them if they occur
+         * multiple times with different cases                                  */
         auto token = tokens_it->str();
         transform(token.begin(), token.end(), token.begin(), //::tolower);
                   /* Wrap ::tolower in a lambda to cast the input into
@@ -73,9 +73,7 @@ tokenizer_t::tokenizer_t(const string &training_text) {
     (this->vocab_id2token).reserve((this->vocab_token2id).size());
 
     for (const auto &[token, id] : (this->vocab_token2id)) {
-        if ((this->vocab_id2token).emplace(id, token).second) {
-
-        } else {
+        if (not (this->vocab_id2token).emplace(id, token).second) {
             ostringstream exception_ss;
             exception_ss << "Unexpected repetition of element [" << id << ", " << token
                          << "] in the ID-to-token vocabulary. This may happen if ID " << id

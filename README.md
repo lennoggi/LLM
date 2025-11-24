@@ -1,12 +1,19 @@
 # LLM
-Building a large language model (LLM) from scratch
+A large language model (LLM) built from scratch
 
-## How to compile this project with CMake
-```
-mkdir build
-cd build
-cmake ..
-cmake --build -DEXE=<executable_name>.
-```
+## Instructions
+- Build with
+  ```
+  ./build_all.sh
+  ```
+- Run with
+  ```
+  ./install/bin/llm
+  ```
+- Remove the build and install directories with
+  ```
+  ./clean_all.sh
+  ```
 
-If `-DEXE` is not passed, a default (`llm`) will be used.
+## References
+Raschka, Sebastian. *Build a Large Language Model (From Scratch)*. Manning Publications, 2024

@@ -2,7 +2,7 @@
 #include <fstream>
 #include <sstream>
 
-#include "Tokenizer.hh"
+#include "Types.hh"
 #include "Parameters.hh"
 
 using namespace std;
@@ -16,20 +16,21 @@ int main() {
          * vocabularies and print the vocabularies                              */
         ostringstream training_text_ss;
         training_text_ss << infile.rdbuf();
-        auto tokenizer = tokenizer_t(training_text_ss.str());
+        const auto &training_text = training_text_ss.str();
+        auto tokenizer = tokenizer_t(training_text);
 
-        cout << "======================" << endl
-             << "Token-to-ID vocabulary" << endl
-             << "======================" << endl;
+        cout << "=======================================" << endl
+             << "Basic tokenizer: token-to-ID vocabulary" << endl
+             << "=======================================" << endl;
 
         for (const auto &[token, id] : tokenizer.vocab_token2id) {
             cout << token << "\t" << id << endl;
         }
 
         cout << endl
-             << "======================" << endl
-             << "ID-to-token vocabulary" << endl
-             << "======================" << endl;
+             << "=======================================" << endl
+             << "Basic tokenizer: ID-to-token vocabulary" << endl
+             << "=======================================" << endl;
 
         for (const auto &[id, token] : tokenizer.vocab_id2token) {
             cout << id << "\t" << token << endl;
@@ -48,8 +49,25 @@ int main() {
 
         const auto &input_text_decoded = tokenizer.decode(tokens);
         cout << endl << input_text_decoded << endl;
+
+
+        // Test the Bype-pair encoding (BPE) tokenizer
+        auto tokenizer_bpe = tokenizer_bpe_t(training_text, NMERGES);
+
+        cout << endl
+             << "======================================================================" << endl
+             << "BPE tokenizer: token pairs -> Occurences after " << NMERGES << " character merges" << endl
+             << "======================================================================" << endl;
+
+        for (const auto &[symbols, occurrences] : tokenizer_bpe.symbols_occurences) {
+            for (const auto &symbol : symbols) {
+                cout << symbol << " ";
+            }
+            cout << "\t" << occurrences << endl;
+        }
     }
 
+    // Handle file opening issues
     else {
         cerr << "Error opening file '" << INFILE_TRAINING << "'" << endl;
         return 1;
