@@ -54,17 +54,17 @@ int main() {
         // Test the Bype-pair encoding (BPE) tokenizer
         auto tokenizer_bpe = tokenizer_bpe_t(training_text, NMERGES);
 
-        cout << endl
-             << "======================================================================" << endl
-             << "BPE tokenizer: token pairs -> Occurences after " << NMERGES << " character merges" << endl
-             << "======================================================================" << endl;
+        //cout << endl
+        //     << "======================================================================" << endl
+        //     << "BPE tokenizer: token pairs -> Occurences after " << NMERGES << " character merges" << endl
+        //     << "======================================================================" << endl;
 
-        for (const auto &[symbols, occurrences] : tokenizer_bpe.symbols_occurences) {
-            for (const auto &symbol : symbols) {
-                cout << symbol << " ";
-            }
-            cout << "\t" << occurrences << endl;
-        }
+        //for (const auto &[symbols, occurrences] : tokenizer_bpe.symbols_occurences) {
+        //    for (const auto &symbol : symbols) {
+        //        cout << symbol << " ";
+        //    }
+        //    cout << "\t" << occurrences << endl;
+        //}
     }
 
     // Handle file opening issues

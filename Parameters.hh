@@ -9,7 +9,7 @@
 
 /* How many times the most common char/multichar pair within the traning text is
  * identified, i.e., how many 'best' char/multichar merges are performed        */
-#define NMERGES 1000
+#define NMERGES 100
 
 
 #endif

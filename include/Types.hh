@@ -4,7 +4,6 @@
 #include <vector>
 #include <string>
 #include <unordered_map>
-#include <map>
 #include <utility>
 
 
@@ -37,13 +36,9 @@ class tokenizer_t {
  * ---------------------------------- */
 class tokenizer_bpe_t {
     public:
-        /* Map relating each word to how many times that word occurs in the
-         * traning text. Words are initially lists of individual characters
-         * which are iteratively merged into subwords.
-         * NOTE: using a regular std::map instead of a std::unordered_map here
-         *       because std::unordered_map<std::vector<std::string>, size_t> is
-         *       illegal                                                        */
-        std::map<std::vector<std::string>, size_t> symbols_occurences;
+        /* List of words in the training text as vectors of "symbols" (initially
+         * individually characters, then iteratively merged into subwords)      */
+        std::vector<std::vector<std::string>> words_list;
 
         // Constructor
         tokenizer_bpe_t(const std::string &training_text,
