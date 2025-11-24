@@ -54,17 +54,14 @@ int main() {
         // Test the Bype-pair encoding (BPE) tokenizer
         auto tokenizer_bpe = tokenizer_bpe_t(training_text, NMERGES);
 
-        //cout << endl
-        //     << "======================================================================" << endl
-        //     << "BPE tokenizer: token pairs -> Occurences after " << NMERGES << " character merges" << endl
-        //     << "======================================================================" << endl;
+        cout << endl
+             << "===================================================================" << endl
+             << "BPE tokenizer: subwords->IDs,frequency after " << NMERGES << " subword merges" << endl
+             << "===================================================================" << endl;
 
-        //for (const auto &[symbols, occurrences] : tokenizer_bpe.symbols_occurences) {
-        //    for (const auto &symbol : symbols) {
-        //        cout << symbol << " ";
-        //    }
-        //    cout << "\t" << occurrences << endl;
-        //}
+        for (const auto &[subword, id_freq] : tokenizer_bpe.vocab_token2idfreq) {
+            cout << subword << "\t" << id_freq.first << "\t" << id_freq.second << endl;
+        }
     }
 
     // Handle file opening issues

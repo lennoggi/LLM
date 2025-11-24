@@ -1,6 +1,8 @@
 #include <iostream>
+#include <vector>
 #include <string>
 #include <sstream>
+#include <utility>
 #include <unordered_map>
 #include <regex>
 #include <algorithm>
@@ -26,6 +28,8 @@ tokenizer_bpe_t::tokenizer_bpe_t(const string &training_text,
     regex                 word_re(R"([a-zA-Z0-9]+|[.,;:!?'"()\[\]\{\}\/\\])");
     sregex_token_iterator words_it(training_text.begin(), training_text.end(), word_re);
     sregex_token_iterator end;
+
+    vector<vector<string>> words_list;
 
     while (words_it != end) {
         /* Make all words lowercase to avoid duplicating them if they occur
@@ -54,8 +58,8 @@ tokenizer_bpe_t::tokenizer_bpe_t(const string &training_text,
         }
 
         // Insert the word into the word list if not there yet
-        if (find((this->words_list).begin(), (this->words_list).end(), word_strvec) == (this->words_list).end()) {
-            (this->words_list).emplace_back(word_strvec);
+        if (find(words_list.begin(), words_list.end(), word_strvec) == words_list.end()) {
+            words_list.emplace_back(word_strvec);
         }
 
         ++words_it;
@@ -66,7 +70,7 @@ tokenizer_bpe_t::tokenizer_bpe_t(const string &training_text,
     // XXX XXX XXX XXX XXX XXX
     // XXX: debug only
     //cout << "***** Initial list of words in the training text *****" << endl;
-    //for (const auto &word_strvec : (this->words_list)) {
+    //for (const auto &word_strvec : words_list) {
     //    for (const auto &el : word_strvec) {
     //        cout << el << " ";
     //    }
@@ -79,36 +83,35 @@ tokenizer_bpe_t::tokenizer_bpe_t(const string &training_text,
 
     /* -------------------------------------------------------------------------
      * 2. For each word in the training text, loop over all symbol pairs
-     *    (initiallysymbol=character, then characters will be iteratively merged
-     *    into subwords) in the word and build a temporary map of
-     *    symbol-pairs->occurrences. Then, find the symbol pair that occurs the
+     *    (initially symbol=character, then characters will be iteratively
+     *    merged into subwords) in the word and build a temporary map of
+     *    symbol-pairs->frequency. Then, find the symbol pair that occurs the
      *    most and replace its separate symbols in the words list with that
      *    symbol pair (a single string). Repeat 'nmerges' times, where 'nmerges'
      *    is specified by the user, each time updating the words list.
      * -------------------------------------------------------------------------*/
-    const auto nwords = (this->words_list).size();
+    const auto nwords = words_list.size();
 
     if (nwords < 1) {
         throw runtime_error("Need at least one word in the training text");
     }
 
     for (auto n = decltype(nmerges){0}; n < nmerges; ++n) {
-        unordered_map<string, size_t> symbolpairs_occurences;
+        unordered_map<string, size_t> symbolpairs_freq;
 
-        for (const auto &word_strvec : (this->words_list)) {
+        for (const auto &word_strvec : words_list) {
             for (auto i = decltype(word_strvec.size()){0}; i < word_strvec.size()-1; ++i) {
                 const string symbol_pair = word_strvec.at(i) + word_strvec.at(i+1);
 
-                /* Try adding 'symbol_pair' to 'symbolpairs_occurences' with
-                 * an initial occurence of 1; if that fails, that means the
-                 * symbol pair is already in the map, so increment its
-                 * occurences by 1.                                             */
-                if (not symbolpairs_occurences.emplace(symbol_pair, 1).second) {
+                /* Try adding 'symbol_pair' to 'symbolpairs_freq' with an
+                 * initial frequency of 1; if that fails, that means the symbol
+                 * pair is already in the map, so increment its frequency by 1. */
+                if (not symbolpairs_freq.emplace(symbol_pair, 1).second) {
                     try {
-                        symbolpairs_occurences.at(symbol_pair) += 1;
+                        symbolpairs_freq.at(symbol_pair) += 1;
                     } catch (const exception &e) {
                         ostringstream exception_ss;
-                        exception_ss << "Failed to access the symbol-pair->occurences map at key '" << symbol_pair <<
+                        exception_ss << "Failed to access the symbol-pair->frequency map at key '" << symbol_pair <<
                             "'. This key should exist, please check the code (exception: \"" << e.what() << "\")." << endl;
                         throw runtime_error(exception_ss.str());
                     }
@@ -116,7 +119,7 @@ tokenizer_bpe_t::tokenizer_bpe_t(const string &training_text,
             }
         }
 
-        const auto iterator_maxcounts = max_element(symbolpairs_occurences.begin(), symbolpairs_occurences.end(),
+        const auto iterator_maxcounts = max_element(symbolpairs_freq.begin(), symbolpairs_freq.end(),
                                                     [](const auto &a, const auto &b){
                                                         return (a.second < b.second);
                                                     });
@@ -130,12 +133,12 @@ tokenizer_bpe_t::tokenizer_bpe_t(const string &training_text,
         //     << "n = " << n  << endl
         //     << "----------" << endl
         //     << "Most common symbol pair: " << most_common_symbolpair << ", frequency " << iterator_maxcounts->second << endl
-        //     << "Symbol-pair->occurences map:" << endl;
+        //     << "Symbol-pair->frequency map:" << endl;
         //// ***** WARNING *****
         //// This may potentially print A LOT of text
         //// *******************
-        ////for (const auto &[symbol_pair, occurrences] : symbolpairs_occurences) {
-        ////    cout << symbol_pair << ", " << occurrences << endl;
+        ////for (const auto &[symbol_pair, freq] : symbolpairs_freq) {
+        ////    cout << symbol_pair << ", " << freq << endl;
         ////}
         // XXX XXX XXX XXX XXX XXX
         // XXX XXX XXX XXX XXX XXX
@@ -143,21 +146,12 @@ tokenizer_bpe_t::tokenizer_bpe_t(const string &training_text,
 
 
         // Update the words list for the next iteration
-        for (auto &word_strvec : (this->words_list)) {
+        for (auto &word_strvec : words_list) {
             for (auto i = decltype(word_strvec.size()){0}; i < word_strvec.size()-1; ++i) {
                 const string symbol_pair = word_strvec.at(i) + word_strvec.at(i+1);
                 if (symbol_pair == most_common_symbolpair) {
                     word_strvec.at(i)   = most_common_symbolpair;
                     word_strvec.at(i+1) = "";
-                    //// NOTE: this assignements would be illegal because the map's key it's implicitly const
-                    ////word_strvec.at(i) = most_common_symbolpair;
-                    //auto node_handler = (this->words_list).extract(word_strvec);
-                    //node_handler.key().at(i) = most_common_symbolpair;
-                    ///* Remove the second character of the pair from the "word"
-                    // * (list of symbols) so it can be deleted (see below)       */
-                    ////word_strvec.at(i+1) = "";  // Illegal (see above)
-                    //node_handler.key().at(i+1) = "";
-                    //(this->words_list).insert(move(node_handler));
                 }
             }
 
@@ -166,10 +160,6 @@ tokenizer_bpe_t::tokenizer_bpe_t(const string &training_text,
             for (auto i = decltype(word_strvec.size()){0}; i < word_strvec.size(); ++i) {
                 if (word_strvec.at(i) == "") {
                     word_strvec.erase(word_strvec.begin() + i);
-                    //auto node_handler = (this->words_list).extract(word_strvec);
-                    ////word_strvec.erase(word_strvec.begin() + i);  // Illegal (see above)
-                    //node_handler.key().erase(word_strvec.begin() + i);
-                    //(this->words_list).insert(move(node_handler));
                 }
             }
         }
@@ -180,7 +170,7 @@ tokenizer_bpe_t::tokenizer_bpe_t(const string &training_text,
     // XXX XXX XXX XXX XXX XXX
     // XXX: debug only
     //cout << "***** Final list of words in the training text *****" << endl;
-    //for (const auto &word_strvec : (this->words_list)) {
+    //for (const auto &word_strvec : words_list) {
     //    for (const auto &el : word_strvec) {
     //        cout << el << " ";
     //    }
@@ -189,6 +179,48 @@ tokenizer_bpe_t::tokenizer_bpe_t(const string &training_text,
     // XXX XXX XXX XXX XXX XXX
     // XXX XXX XXX XXX XXX XXX
     // XXX XXX XXX XXX XXX XXX
+
+
+    /* ------------------------------------------------------------------------
+     * 3. Loop over the words list and link each subword to a unique integer ID
+     * and its frequency through a hash map
+     * ------------------------------------------------------------------------ */
+    size_t id = 0;
+
+    for (const auto &word_strvec : words_list) {
+        for (const auto &subword : word_strvec) {
+            /* Try adding the subword to the token-to-ID-and-frequency
+             * vocabulary with an initial frequency of 1; if that fails, that
+             * means the subword is already in the vocabulary, so increment its
+             * frequency by 1.                                                  */
+            if ((this->vocab_token2idfreq).emplace(subword, pair{id, 1}).second) {
+                ++id;
+            } else {
+                try {
+                    (this->vocab_token2idfreq).at(subword).second += 1;
+                } catch (const exception &e) {
+                    ostringstream exception_ss;
+                    exception_ss << "Failed to access the subwords->frequency map at key '" << subword <<
+                        "'. This key should exist, please check the code (exception: \"" << e.what() << "\")." << endl;
+                    throw runtime_error(exception_ss.str());
+                }
+            }
+        }
+    }
+
+    /* Add extra IDs to handle unknown and end-of-text (useful when training
+     * with multiple text sources) tokens (set frequencies to 1)                */
+    const auto original_vocab_size = (this->vocab_token2idfreq).size();
+    (this->unk) = {"<|unknown|>",     {original_vocab_size,     1}};
+    (this->eot) = {"<|end-of-text|>", {original_vocab_size + 1, 1}};
+
+    if (not (this->vocab_token2idfreq).emplace(this->unk).second) {
+        throw runtime_error("Insertion of 'unknown' token failed");
+    }
+
+    if (not (this->vocab_token2idfreq).emplace(this->eot).second) {
+        throw runtime_error("Insertion of 'end-of-text' token failed");
+    }
 }
 
 

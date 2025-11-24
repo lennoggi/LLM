@@ -1,6 +1,7 @@
 #include <iostream>
 #include <string>
 #include <sstream>
+#include <utility>
 #include <unordered_map>
 #include <regex>
 #include <algorithm>
@@ -53,7 +54,7 @@ tokenizer_t::tokenizer_t(const string &training_text) {
     }
 
 
-    /* Add extra ids to handle unknown and end-of-text (useful when training
+    /* Add extra IDs to handle unknown and end-of-text (useful when training
      * with multiple text sources) tokens                                       */
     const auto original_vocab_size = (this->vocab_token2id).size();
     (this->unk) = {"<|unknown|>",     original_vocab_size};

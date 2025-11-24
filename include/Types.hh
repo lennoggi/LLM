@@ -36,9 +36,14 @@ class tokenizer_t {
  * ---------------------------------- */
 class tokenizer_bpe_t {
     public:
-        /* List of words in the training text as vectors of "symbols" (initially
-         * individually characters, then iteratively merged into subwords)      */
-        std::vector<std::vector<std::string>> words_list;
+        // 'Unknown' and 'end-of-text' tokens
+        std::pair<std::string, std::pair<size_t, size_t>> unk, eot;
+
+        /* Token-to-ID-and-frequency vocabulary, i.e., a hash map relating
+         * unique tokens (subwords) from a training text to integer IDs and the
+         * occurrence frequency of that token                                   */
+        // TODO: add vocab_idfreqt2token
+        std::unordered_map<std::string, std::pair<size_t, size_t>> vocab_token2idfreq;
 
         // Constructor
         tokenizer_bpe_t(const std::string &training_text,
