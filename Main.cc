@@ -2,6 +2,7 @@
 #include <fstream>
 #include <sstream>
 
+#include "Check_parameters.hh"
 #include "Types.hh"
 #include "Parameters.hh"
 
@@ -12,8 +13,9 @@ int main() {
     ifstream infile(INFILE_TRAINING, ifstream::in);
 
     if (infile.is_open()) {
-        /* Encode the input training text into a token-to-ID and an ID-to-token
-         * vocabularies and print the vocabularies                              */
+        /* ---------------------
+         * Simple tokenizer test
+         * --------------------- */
         ostringstream training_text_ss;
         training_text_ss << infile.rdbuf();
         const auto &training_text = training_text_ss.str();
@@ -38,7 +40,6 @@ int main() {
 
         cout << endl << "---------------------------------------------------------------------------------" << endl << endl;
 
-
         // Test the encode and decode methods onto a user-specified input text
         string input_text(INPUT_TEXT);
         const auto &tokens = tokenizer.encode(input_text);
@@ -51,8 +52,11 @@ int main() {
         cout << endl << input_text_decoded << endl;
 
 
-        // Test the Bype-pair encoding (BPE) tokenizer
-        auto tokenizer_bpe = tokenizer_bpe_t(training_text, NMERGES);
+
+        /* ---------------------------------------
+         * Byte-pair encoding (BPE) tokenizer test
+         * --------------------------------------- */
+        auto tokenizer_bpe = tokenizer_bpe_t(training_text, NMERGES_BPE);
 
         cout << endl
              << "==========================" << endl
@@ -66,11 +70,30 @@ int main() {
         cout << endl
              << "=====================================" << endl
              << "BPE tokenizer: ID-to-token vocabulary" << endl
-             << "=================u===================" << endl;
+             << "=====================================" << endl;
 
         for (const auto &[id, token] : tokenizer_bpe.vocab_id2token) {
             cout << id << "\t" << token << endl;
         }
+
+        cout << endl << "---------------------------------------------------------------------------------" << endl << endl;
+
+        // Test the encode and decode methods onto a user-specified input text
+        // XXX XXX XXX XXX XXX XXX
+        // XXX XXX XXX XXX XXX XXX
+        // XXX XXX XXX XXX XXX XXX
+        const auto &tokens_bpe = tokenizer_bpe.encode(input_text, NMERGES_BPE);
+        //const auto &tokens_bpe = tokenizer_bpe.encode(input_text, 5);
+        // XXX XXX XXX XXX XXX XXX
+        // XXX XXX XXX XXX XXX XXX
+        // XXX XXX XXX XXX XXX XXX
+
+        for (const auto &token : tokens_bpe) {
+            cout << token << " ";
+        }
+
+        const auto &input_text_decoded_bpe = tokenizer_bpe.decode(tokens_bpe);
+        cout << endl << input_text_decoded_bpe << endl;
     }
 
     // Handle file opening issues

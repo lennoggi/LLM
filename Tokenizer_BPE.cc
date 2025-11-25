@@ -14,28 +14,28 @@ using namespace std;
 
 
 /* ===========================================================================
- * Constructor building a map relating each subword token in the training text
- * to how many times that subword occurs in the traning text
+ * Method to get the list of words split into subword tokens out of a text via
+ * the byte-pair encoding (BPE) technique
  * ===========================================================================  */
-tokenizer_bpe_t::tokenizer_bpe_t(const string &training_text,
-                                 const size_t &nmerges) {
-    /* ----------------------------------------------------------------
-     * 1. Build a list of all the words in the training set as lists of
+void tokenizer_bpe_t::text2tokens(const string &text,
+                                  const size_t &nmerges,
+                                  const bool   &skip_repeated_words,
+                                        vector<vector<string>> &words_list) {
+    /* --------------------------------------------------------------
+     * 1. Build a list of all the words in the input text as lists of
      *    individual characters
-     * ----------------------------------------------------------------         */
+     * --------------------------------------------------------------           */
     /* This regex matches words, numbers, and punctuation as individual tokens,
      * which should be regarded as lists of "symbols"                           */
     regex                 word_re(R"([a-zA-Z0-9]+|[.,;:!?'"()\[\]\{\}\/\\])");
-    sregex_token_iterator words_it(training_text.begin(), training_text.end(), word_re);
+    sregex_token_iterator words_it(text.begin(), text.end(), word_re);
     sregex_token_iterator end;
-
-    vector<vector<string>> words_list;
 
     while (words_it != end) {
         /* Make all words lowercase to avoid duplicating them if they occur
          * multiple times with different cases                                  */
         auto word = words_it->str();
-        transform(word.begin(), word.end(), word.begin(), //::tolower);
+        transform(word.begin(), word.end(), word.begin(), //std::tolower);
                   /* Wrap ::tolower in a lambda to cast the input into
                    * unsigned char to avoid undefined behavior if the input
                    * char is signed and negative (non-ASCII byte)           */
@@ -44,21 +44,24 @@ tokenizer_bpe_t::tokenizer_bpe_t(const string &training_text,
                   }
                  );
 
-        /* Add the 'end-of-word' character (ASCII separator) to the word
-         * NOTE: usually not printable with std::cout (print either produces
-         *       nothing or weird strings)                                      */
-        word += 0x1F;
-
         /* Convert the word into a vector of strings (for now just individual
          * characters, then these will be iteratively replaced with strings of
-         * multiple characters)                                                 */
-        vector<string> word_strvec(word.size());
-        for (auto i = decltype(word.size()){0}; i < word.size(); ++i) {
+         * multiple characters)
+         * NOTE: don't isolate the end-of-word character                        */
+        const auto word_size = word.size();
+        vector<string> word_strvec(word_size);
+        for (auto i = decltype(word_size){0}; i < word_size; ++i) {
             word_strvec.at(i) = word.at(i);
         }
+        word_strvec.at(word_size - 1) += END_OF_WORD_BPE;
 
-        // Insert the word into the word list if not there yet
-        if (find(words_list.begin(), words_list.end(), word_strvec) == words_list.end()) {
+        /* Insert the word into the word list (if 'skip_repeated_words' is true,
+         * only do that if the word is not yet in the list)                     */
+        if (skip_repeated_words) {
+            if (find(words_list.begin(), words_list.end(), word_strvec) == words_list.end()) {
+                words_list.emplace_back(word_strvec);
+            }
+        } else {
             words_list.emplace_back(word_strvec);
         }
 
@@ -69,7 +72,7 @@ tokenizer_bpe_t::tokenizer_bpe_t(const string &training_text,
     // XXX XXX XXX XXX XXX XXX
     // XXX XXX XXX XXX XXX XXX
     // XXX: debug only
-    //cout << "***** Initial list of words in the training text *****" << endl;
+    //cout << "***** Initial list of words in the text *****" << endl;
     //for (const auto &word_strvec : words_list) {
     //    for (const auto &el : word_strvec) {
     //        cout << el << " ";
@@ -82,9 +85,9 @@ tokenizer_bpe_t::tokenizer_bpe_t(const string &training_text,
 
 
     /* -------------------------------------------------------------------------
-     * 2. For each word in the training text, loop over all symbol pairs
-     *    (initially symbol=character, then characters will be iteratively
-     *    merged into subwords) in the word and build a temporary map of
+     * 2. For each word in the text, loop over all symbol pairs (initially
+     *    symbol=character, then characters will be iteratively merged into
+     *    subwords) in the word and build a temporary map of
      *    symbol-pairs->frequency. Then, find the symbol pair that occurs the
      *    most and replace its separate symbols in the words list with that
      *    symbol pair (a single string). Repeat 'nmerges' times, where 'nmerges'
@@ -93,7 +96,7 @@ tokenizer_bpe_t::tokenizer_bpe_t(const string &training_text,
     const auto nwords = words_list.size();
 
     if (nwords < 1) {
-        throw runtime_error("Need at least one word in the training text");
+        throw runtime_error("Need at least one word in the text");
     }
 
     for (auto n = decltype(nmerges){0}; n < nmerges; ++n) {
@@ -180,15 +183,35 @@ tokenizer_bpe_t::tokenizer_bpe_t(const string &training_text,
     // XXX XXX XXX XXX XXX XXX
     // XXX XXX XXX XXX XXX XXX
 
+    return;
+}
 
-    /* ------------------------------------------------------------------------
-     * 3. Loop over the words list and link each token (=subword) to a unique
-     *    integer ID through a hash map (as well as its inverse map)
-     * ------------------------------------------------------------------------ */
+
+
+/* ===========================================================================
+ * Constructor building a map relating each subword token in the training text
+ * to how many times that subword occurs in the traning text
+ * ===========================================================================  */
+tokenizer_bpe_t::tokenizer_bpe_t(const string &training_text,
+                                 const size_t &nmerges_training) {
+    // Get a list of words split into subwords tokens from the training text
+    vector<vector<string>> words_list;
+    const bool skip_repeated_words = true;  // Don't want duplicate words in the vocabulary
+    this->text2tokens(training_text, nmerges_training, skip_repeated_words, words_list);
+
+    /* -------------------------------------------------------------------
+     * Loop over the words list and link each token (=subword) to a unique
+     * integer ID through a hash map (as well as its inverse map)
+     * -------------------------------------------------------------------     */
     size_t id = 0;
 
     for (const auto &word_strvec : words_list) {
         for (const auto &token : word_strvec) {
+            // Sanity check
+            if (token == END_OF_WORD_BPE) {
+                throw runtime_error("Found end-of-word character token in the training text. This should never happen: please check the code does not isolate the end-of-word character when splitting each word into individual characters during training.");
+            }
+
             /* Try inserting the token into the token-to-ID vocabulary (O(1) for
              * token lookup in tokenizer_BPE_t::encode()); this will only
              * succeed if the token is not in the vocabulary yet, since the
@@ -235,4 +258,77 @@ tokenizer_bpe_t::tokenizer_bpe_t(const string &training_text,
 
 
 
-// TODO: implement the encode and decode methods
+/* ============================================================================
+ * Encode method using the token-to-ID vocabulary to convert an input text into
+ * the corresponding set of token IDs
+ * ============================================================================ */
+vector<size_t> tokenizer_bpe_t::encode(const string &text,
+                                       const size_t &nmerges) {
+    /* Get a list of words split into subwords tokens from the input text
+     * NOTE: a number of merges different from that used during training is
+     *       allowed (may or may not be beneficial, try it and see)             */
+    vector<vector<string>> words_list;
+    const bool skip_repeated_words = false;  // Encode duplicate words too
+    this->text2tokens(text, nmerges, skip_repeated_words, words_list);
+
+    // Get the number of tokens in the input text
+    size_t ntokens = 0;
+    for (const auto &word_strvec : words_list) {
+        for (const auto &token : word_strvec) {
+            // Sanity check
+            if (token == END_OF_WORD_BPE) {
+                throw runtime_error("Found end-of-word character token in the input text. This is not supported: either change the end-of-word character to something not present in the input text, or remove the end-of-word character from the input text.");
+            }
+            ++ntokens;
+        }
+    }
+
+    vector<size_t> tokenIDs(ntokens);
+
+    size_t i = 0;
+    for (const auto &word_strvec : words_list) {
+        for (const auto &token : word_strvec) {
+            /* Convert the token into the ID if found in the vocabulary,
+             * otherwise set the ID to 'unknown'                                */
+            try {
+                /* NOTE: the at() method on the RHS throws an exception if the
+                 *       token is not in the token-to-ID vocabulary             */
+                tokenIDs.at(i) = (this->vocab_token2id).at(token);
+            } catch (exception &e) {
+                tokenIDs.at(i) = (this->unk).second;
+                cerr << "Unknown token '" << token << "': setting ID to 'unknown' token ID "
+                     << (this->unk).second << " (exception: \"" << e.what() << "\")" << endl;
+            }
+
+            ++i;
+        }
+    }
+
+    return tokenIDs;
+}
+
+
+
+/* ========================================================================
+ * Decode method using the ID-to-token vocabulary to convert a set of input
+ * token IDs into the corresponding text tokens
+ * ========================================================================= */
+string tokenizer_bpe_t::decode(const vector<size_t> &ids) {
+    ostringstream decoded_text_ss;
+
+    for (const auto &id : ids) {
+        try {
+            /* NOTE: extra space separating tokens just to clarify which tokens
+             *       are being used to build the decoded text                   */
+            decoded_text_ss << (this->vocab_id2token).at(id) << " ";
+        } catch (exception &e) {
+            ostringstream exception_ss;
+            exception_ss << "Unknown token ID " << id
+                         << ": this should never happen because the 'unknown' token should be part of the dictionary. Please check the code's correctness (exception: \""
+                         << e.what() << "\")";
+            throw runtime_error(exception_ss.str());
+        }
+    }
+
+    return decoded_text_ss.str();
+}

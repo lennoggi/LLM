@@ -28,8 +28,8 @@ tokenizer_t::tokenizer_t(const string &training_text) {
         /* Make all tokens lowercase to avoid duplicating them if they occur
          * multiple times with different cases                                  */
         auto token = tokens_it->str();
-        transform(token.begin(), token.end(), token.begin(), //::tolower);
-                  /* Wrap ::tolower in a lambda to cast the input into
+        transform(token.begin(), token.end(), token.begin(), //std::tolower);
+                  /* Wrap std::tolower in a lambda to cast the input into
                    * unsigned char to avoid undefined behavior if the input
                    * char is signed and negative (non-ASCII byte)           */
                   [](unsigned char c)->char {
@@ -114,10 +114,10 @@ vector<size_t> tokenizer_t::encode(const string &text) {
                  );
 
         /* Convert the token into the ID if found in the vocabulary, otherwise
-         * set the ID t 'unknown'                                               */
+         * set the ID to 'unknown'                                              */
         try {
-            /* The at() method on the RHS throws an exception if the token is
-             * not in the token-to-ID vocabulary                                */
+            /* NOTE: the at() method on the RHS throws an exception if the token
+             *       is not in the token-to-ID vocabulary                       */
             tokenIDs.at(i) = (this->vocab_token2id).at(token);
         } catch (exception &e) {
             tokenIDs.at(i) = (this->unk).second;
@@ -140,7 +140,8 @@ string tokenizer_t::decode(const vector<size_t> &ids) {
 
     for (const auto &id : ids) {
         try {
-            decoded_text_ss << (this->vocab_id2token).at(id) << " ";  // NOTE: extra space to separate tokens
+            // NOTE: extra space to separate tokens
+            decoded_text_ss << (this->vocab_id2token).at(id) << " ";
         } catch (exception &e) {
             ostringstream exception_ss;
             exception_ss << "Unknown token ID " << id
