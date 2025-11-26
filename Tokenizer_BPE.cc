@@ -381,9 +381,8 @@ string tokenizer_bpe_t::decode(const vector<size_t> &ids) {
 
     for (const auto &id : ids) {
         try {
-            /* NOTE: extra space separating tokens just to visually isolate them
-             *       better                                                     */
-            decoded_text_ss << (this->vocab_id2token).at(id) << " ";
+            // NOTE: no extra space separating tokens
+            decoded_text_ss << (this->vocab_id2token).at(id);
         } catch (const exception &e) {
             ostringstream exception_ss;
             exception_ss << "Unknown token ID " << id

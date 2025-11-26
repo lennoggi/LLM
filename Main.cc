@@ -13,80 +13,92 @@ int main() {
     ifstream infile(INFILE_TRAINING, ifstream::in);
 
     if (infile.is_open()) {
-        /* ---------------------
-         * Simple tokenizer test
-         * --------------------- */
         ostringstream training_text_ss;
         training_text_ss << infile.rdbuf();
-        const auto &training_text = training_text_ss.str();
+        const auto   &training_text(training_text_ss.str());
+        const string &input_text(INPUT_TEXT);
+
+        cout << "===============" << endl
+             << "Basic tokenizer" << endl
+             << "===============" << endl;
+
         auto tokenizer = tokenizer_t(training_text);
 
-        cout << "=======================================" << endl
+        cout << endl
+             << "---------------------------------------" << endl
              << "Basic tokenizer: token-to-ID vocabulary" << endl
-             << "=======================================" << endl;
+             << "---------------------------------------" << endl;
 
         for (const auto &[token, id] : tokenizer.vocab_token2id) {
             cout << token << "\t" << id << endl;
         }
 
         cout << endl
-             << "=======================================" << endl
+             << "---------------------------------------" << endl
              << "Basic tokenizer: ID-to-token vocabulary" << endl
-             << "=======================================" << endl;
+             << "---------------------------------------" << endl;
 
         for (const auto &[id, token] : tokenizer.vocab_id2token) {
             cout << id << "\t" << token << endl;
         }
 
-        cout << endl << "---------------------------------------------------------------------------------" << endl << endl;
+        cout << endl
+             << "-------------------------------------------" << endl
+             << "Basic tokenizer: text encoding and decoding" << endl
+             << "-------------------------------------------" << endl;
 
-        // Test the encode and decode methods onto a user-specified input text
-        string input_text(INPUT_TEXT);
         const auto &tokens = tokenizer.encode(input_text);
 
+        cout << "***** Encoded text *****" << endl;
         for (const auto &token : tokens) {
             cout << token << " ";
         }
 
+        cout << endl << "***** Decoded text *****" << endl;
         const auto &input_text_decoded = tokenizer.decode(tokens);
-        cout << endl << input_text_decoded << endl;
+        cout << input_text_decoded << endl;
 
 
+        cout << endl
+             << "=============" << endl
+             << "BPE tokenizer" << endl
+             << "=============" << endl;
 
-        /* ---------------------------------------
-         * Byte-pair encoding (BPE) tokenizer test
-         * --------------------------------------- */
         auto tokenizer_bpe = tokenizer_bpe_t(training_text, BPE_END_OF_WORD, BPE_MAX_VOCAB_SIZE);
 
         cout << endl
-             << "==========================" << endl
-             << "BPE tokenizer: token-to-ID" << endl
-             << "==========================" << endl;
+             << "-------------------------------------" << endl
+             << "BPE tokenizer: token-to-ID vocabulary" << endl
+             << "-------------------------------------" << endl;
 
         for (const auto &[token, id] : tokenizer_bpe.vocab_token2id) {
             cout << token << "\t" << id << endl;
         }
 
         cout << endl
-             << "=====================================" << endl
+             << "-------------------------------------" << endl
              << "BPE tokenizer: ID-to-token vocabulary" << endl
-             << "=====================================" << endl;
+             << "-------------------------------------" << endl;
 
         for (const auto &[id, token] : tokenizer_bpe.vocab_id2token) {
             cout << id << "\t" << token << endl;
         }
 
-        cout << endl << "---------------------------------------------------------------------------------" << endl << endl;
+        cout << endl
+             << "-------------------------------------------" << endl
+             << "Basic tokenizer: text encoding and decoding" << endl
+             << "-------------------------------------------" << endl;
 
-        // Test the encode and decode methods onto a user-specified input text
         const auto &tokens_bpe = tokenizer_bpe.encode(input_text, BPE_END_OF_WORD);
 
+        cout << "***** Encoded text *****" << endl;
         for (const auto &token : tokens_bpe) {
             cout << token << " ";
         }
 
+        cout << endl << "***** Decoded text *****" << endl;
         const auto &input_text_decoded_bpe = tokenizer_bpe.decode(tokens_bpe);
-        cout << endl << input_text_decoded_bpe << endl;
+        cout << input_text_decoded_bpe << endl;
     }
 
     // Handle file opening issues
