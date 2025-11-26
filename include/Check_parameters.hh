@@ -3,7 +3,7 @@
 
 #include "../Parameters.hh"
 
-static_assert(NMERGES_BPE >= 0);
+static_assert(BPE_MAX_VOCAB_SIZE > 0);
 static_assert(VERBOSE or not VERBOSE);
 
 #endif

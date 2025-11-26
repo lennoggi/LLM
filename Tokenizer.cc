@@ -12,10 +12,9 @@
 using namespace std;
 
 
-/* ==========================================================================
- * Constructor building the vocabulary, i.e., a hash map relating unique text
- * tokens to integer IDs
- * ========================================================================== */
+/* =================================================================
+ * Constructor building the token-ti-ID and ID-to-token vocabularies
+ * ================================================================= */
 tokenizer_t::tokenizer_t(const string &training_text) {
     // This regex matches words, numbers, and punctuation as individual tokens
     regex                 token_re(R"([a-zA-Z0-9]+|[.,;:!?'"()\[\]\{\}\/\\])");
@@ -98,9 +97,9 @@ vector<size_t> tokenizer_t::encode(const string &text) {
 
     const auto nmatches = static_cast<size_t>(distance(tokens_it, end));
     vector<size_t> tokenIDs(nmatches);
+    size_t m = 0;
 
-    size_t i = 0;
-    for (sregex_token_iterator it(text.begin(), text.end(), token_re); it != end; ++it, ++i) {
+    for (sregex_token_iterator it(text.begin(), text.end(), token_re); it != end; ++it, ++m) {
         /* Make all tokens lowercase to avoid duplicating them if the same
          * word appears multiple times with different cases                 */
         auto token = it->str();
@@ -118,9 +117,9 @@ vector<size_t> tokenizer_t::encode(const string &text) {
         try {
             /* NOTE: the at() method on the RHS throws an exception if the token
              *       is not in the token-to-ID vocabulary                       */
-            tokenIDs.at(i) = (this->vocab_token2id).at(token);
-        } catch (exception &e) {
-            tokenIDs.at(i) = (this->unk).second;
+            tokenIDs.at(m) = (this->vocab_token2id).at(token);
+        } catch (const exception &e) {
+            tokenIDs.at(m) = (this->unk).second;
             cerr << "Unknown token '" << token << "': setting ID to 'unknown' token ID "
                  << (this->unk).second << " (exception: \"" << e.what() << "\")" << endl;
         }
@@ -142,7 +141,7 @@ string tokenizer_t::decode(const vector<size_t> &ids) {
         try {
             // NOTE: extra space to separate tokens
             decoded_text_ss << (this->vocab_id2token).at(id) << " ";
-        } catch (exception &e) {
+        } catch (const exception &e) {
             ostringstream exception_ss;
             exception_ss << "Unknown token ID " << id
                          << ": this should never happen because the 'unknown' token should be part of the dictionary. Please check the code's correctness (exception: \""

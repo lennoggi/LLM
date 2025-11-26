@@ -34,11 +34,6 @@ class tokenizer_t {
  * Byte-pair encoding (BPE) tokenizer
  * ---------------------------------- */
 class tokenizer_bpe_t {
-    private:
-        void text2tokens(const std::string &text,
-                         const size_t      &nmerges,
-                         const bool        &skip_repeated_words,
-                               std::vector<std::vector<std::string>> &words_list);
     public:
         // 'Unknown' and 'end-of-text' tokens
         std::pair<std::string, size_t> unk, eot;
@@ -50,11 +45,12 @@ class tokenizer_bpe_t {
 
         // Constructor
         tokenizer_bpe_t(const std::string &training_text,
-                        const size_t      &nmerges_training);
+                        const std::string &end_of_word,
+                        const size_t      &max_vocab_size);
 
         // Encode (token-to-ID) method
         std::vector<size_t> encode(const std::string &text,
-                                   const size_t      &nmerges);
+                                   const std::string &end_of_word);
 
         // Decode (ID-to-token) method
         std::string decode(const std::vector<size_t> &ids);

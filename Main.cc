@@ -56,7 +56,7 @@ int main() {
         /* ---------------------------------------
          * Byte-pair encoding (BPE) tokenizer test
          * --------------------------------------- */
-        auto tokenizer_bpe = tokenizer_bpe_t(training_text, NMERGES_BPE);
+        auto tokenizer_bpe = tokenizer_bpe_t(training_text, BPE_END_OF_WORD, BPE_MAX_VOCAB_SIZE);
 
         cout << endl
              << "==========================" << endl
@@ -79,14 +79,7 @@ int main() {
         cout << endl << "---------------------------------------------------------------------------------" << endl << endl;
 
         // Test the encode and decode methods onto a user-specified input text
-        // XXX XXX XXX XXX XXX XXX
-        // XXX XXX XXX XXX XXX XXX
-        // XXX XXX XXX XXX XXX XXX
-        const auto &tokens_bpe = tokenizer_bpe.encode(input_text, NMERGES_BPE);
-        //const auto &tokens_bpe = tokenizer_bpe.encode(input_text, 5);
-        // XXX XXX XXX XXX XXX XXX
-        // XXX XXX XXX XXX XXX XXX
-        // XXX XXX XXX XXX XXX XXX
+        const auto &tokens_bpe = tokenizer_bpe.encode(input_text, BPE_END_OF_WORD);
 
         for (const auto &token : tokens_bpe) {
             cout << token << " ";
