@@ -45,10 +45,7 @@ int main() {
         array<double, dim_inout> Wq, Wk, Wv;
 
         random_device rd;  // Use machine entropy as the random seed
-        // XXX
-        //const auto seed = rd();
-        const auto seed = 1.;
-        // XXX
+        const auto seed = rd();
         mt19937 gen(seed);
         uniform_real_distribution<double> dist(0., 1.);
 
@@ -168,20 +165,6 @@ int main() {
                 }
             }
         }
-
-        // XXX
-        for (auto m = decltype(nids){0}; m < nids; ++m) {
-            const auto idx_m_out = m*DIM_OUT;
-            for (auto j = decltype(DIM_OUT){0}; j < DIM_OUT; ++j) {
-                cout << contexts.at(idx_m_out + j) << "\t";
-            } cout << endl;
-        }
-        // XXX
-
-
-
-
-
 
 
 
