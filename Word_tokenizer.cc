@@ -15,7 +15,7 @@ using namespace std;
 /* =================================================================
  * Constructor building the token-ti-ID and ID-to-token vocabularies
  * ================================================================= */
-tokenizer_t::tokenizer_t(const string &training_text) {
+word_tokenizer_t::word_tokenizer_t(const string &training_text) {
     // This regex matches words, numbers, and punctuation as individual tokens
     regex                 token_re(R"([a-zA-Z0-9]+|[.,;:!?'"()\[\]\{\}\/\\])");
     sregex_token_iterator tokens_it(training_text.begin(), training_text.end(), token_re);
@@ -89,7 +89,7 @@ tokenizer_t::tokenizer_t(const string &training_text) {
  * Encode method using the token-to-ID vocabulary to convert an input text into
  * the corresponding set of token IDs
  * ============================================================================ */
-vector<size_t> tokenizer_t::encode(const string &text) {
+vector<size_t> word_tokenizer_t::encode(const string &text) {
     // This regex matches words, numbers, and punctuation as individual tokens
     regex                 token_re(R"([a-zA-Z0-9]+|[.,;:!?'"()\[\]\{\}\/\\])");
     sregex_token_iterator tokens_it(text.begin(), text.end(), token_re);
@@ -134,7 +134,7 @@ vector<size_t> tokenizer_t::encode(const string &text) {
  * Decode method using the ID-to-token vocabulary to convert a set of input
  * token IDs into the corresponding text tokens
  * ========================================================================= */
-string tokenizer_t::decode(const vector<size_t> &ids) {
+string word_tokenizer_t::decode(const vector<size_t> &ids) {
     ostringstream decoded_text_ss;
 
     for (const auto &id : ids) {

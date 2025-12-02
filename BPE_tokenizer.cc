@@ -17,8 +17,8 @@ using namespace std;
 /* =================================================================
  * Constructor building the token-to-ID and ID-to-token vocabularies
  * ================================================================= */
-tokenizer_bpe_t::tokenizer_bpe_t(const string &training_text,
-                                 const string &end_of_word,
+bpe_tokenizer_t::bpe_tokenizer_t(const string &training_text,
+                                 const string &eow,
                                  const size_t &max_vocab_size) {
     /* -------------------------------------------------------------------
      * 1. Build a list of all the words in the training text as vectors of
@@ -56,7 +56,7 @@ tokenizer_bpe_t::tokenizer_bpe_t(const string &training_text,
         }
 
         // Append the end-of-word character to the last character in the word
-        word_strvec.at(word_size - 1) += end_of_word;
+        word_strvec.at(word_size - 1) += eow;
 
         // Insert the word into the word list if not there yet
         if (find(words_list.begin(), words_list.end(), word_strvec) == words_list.end()) {
@@ -75,12 +75,12 @@ tokenizer_bpe_t::tokenizer_bpe_t(const string &training_text,
     for (const auto &word_strvec : words_list) {
         for (const auto &token : word_strvec) {
             // Sanity check
-            if (token == end_of_word) {
+            if (token == eow) {
                 throw runtime_error("Found end-of-word character token in the training text. This is not supported: please change the end-of-word character to something not present in the training text.");
             }
 
             /* Try inserting the token into the token-to-ID vocabulary (O(1) for
-             * token lookup in tokenizer_BPE_t::encode()); this will only
+             * token lookup in bpe_tokenizer_t::encode()); this will only
              * succeed if the token is not in the vocabulary yet, since the
              * tokens are the keys in the map and keys are unique               */
             if ((this->vocab_token2id).emplace(token, id).second) {
@@ -210,7 +210,7 @@ tokenizer_bpe_t::tokenizer_bpe_t(const string &training_text,
     }
 
     /* Build the ID-to-token vocabulary for fast (O(1)) ID lookup in
-     * tokenizer_BPE_t::decode()                                                */
+     * bpe_tokenizer_t::decode()                                                */
     (this->vocab_id2token).reserve((this->vocab_token2id).size());
 
     for (const auto &[token, id] : (this->vocab_token2id)) {
@@ -222,6 +222,9 @@ tokenizer_bpe_t::tokenizer_bpe_t(const string &training_text,
             throw runtime_error(exception_ss.str());
         }
     }
+
+    // Initialize the internal end-of-word string for the encode() method
+    (this->eow) = eow;
 }
 
 
@@ -230,8 +233,7 @@ tokenizer_bpe_t::tokenizer_bpe_t(const string &training_text,
  * Encode method using the token-to-ID vocabulary to convert an input text into
  * the corresponding set of token IDs
  * ============================================================================ */
-vector<size_t> tokenizer_bpe_t::encode(const string &text,
-                                       const string &end_of_word) {
+vector<size_t> bpe_tokenizer_t::encode(const string &text) {
     /* ---------------------------------------------------------------------
      * 1. Build a list of all the words in the text as vectors of individual
      *    characters
@@ -268,7 +270,7 @@ vector<size_t> tokenizer_bpe_t::encode(const string &text,
         }
 
         // Append the end-of-word character to the last character in the word
-        word_strvec.at(word_size - 1) += end_of_word;
+        word_strvec.at(word_size - 1) += (this->eow);
 
         /* Insert the word into the word list
          * NOTE: insert repeated words as well, since we are encoding a text,
@@ -339,7 +341,7 @@ vector<size_t> tokenizer_bpe_t::encode(const string &text,
     for (const auto &word_strvec : words_list) {
         for (const auto &token : word_strvec) {
             // Sanity check
-            if (token == end_of_word) {
+            if (token == (this->eow)) {
                 throw runtime_error("Found end-of-word character token in the input text. This is not supported: please change the end-of-word character to something not present in the training text.");
             }
             ++ntokens;
@@ -376,7 +378,7 @@ vector<size_t> tokenizer_bpe_t::encode(const string &text,
  * Decode method using the ID-to-token vocabulary to convert a set of input
  * token IDs into the corresponding text tokens
  * ========================================================================= */
-string tokenizer_bpe_t::decode(const vector<size_t> &ids) {
+string bpe_tokenizer_t::decode(const vector<size_t> &ids) {
     ostringstream decoded_text_ss;
 
     for (const auto &id : ids) {
