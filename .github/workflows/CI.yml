@@ -1,0 +1,17 @@
+name: CI
+
+on:
+    push:
+    pull_request:
+
+jobs:
+    build:
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Checkout the repository
+              uses: actions/checkout@v4
+            - name: Compile the code
+              run:  ./build_all.sh
+            - name: Run the code
+              run:  ./install/bin/llm
