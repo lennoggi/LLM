@@ -3,8 +3,10 @@
 set -e
 set -x
 
-./clean_all.sh
+rm -rf install
 mkdir build
 cd build
 cmake ..
 make install
+cd ..
+rm -rf build
