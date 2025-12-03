@@ -12,6 +12,6 @@ jobs:
             - name: Checkout the repository
               uses: actions/checkout@v4
             - name: Compile the code
-              run:  ./build_all.sh
+              run:  ./build.sh
             - name: Run the code
               run:  ./install/bin/llm
