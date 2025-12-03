@@ -1,3 +1,5 @@
+[![CI](https://github.com/lennoggi/LLM/actions/workflows/CI.yml/badge.svg)](https://github.com/lennoggi/LLM/actions/workflows/CI.yml)
+
 # LLM
 A large language model (LLM) built from scratch
 
