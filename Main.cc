@@ -1,5 +1,4 @@
 #include <cassert>
-#include <array>
 #include <vector>
 #include <iostream>
 #include <fstream>
@@ -17,7 +16,8 @@ int main() {
     ifstream infile(INFILE_TRAINING, ifstream::in);
 
     if (infile.is_open()) {
-        // Encode the input text into token IDs
+        /* Build the tokenizer object, which contains the token<->ID
+         * vocabularies and the encode() and decode() methods                   */
         ostringstream training_text_ss;
         training_text_ss << infile.rdbuf();
         const auto   &training_text(training_text_ss.str());
@@ -32,46 +32,74 @@ int main() {
         return 1;  // Not reached
         #endif
 
-        const auto &ids = tokenizer.encode(input_text);
-        const auto nids = ids.size();
 
+        /* Initialize a vector representation ("embedding") of each token in the
+         * vocabulary with random numbers (to be optimized during training
+         * later on)                                                            */
+        const auto nids_vocab = tokenizer.vocab_token2id.size();
+        vector<double> vocab_embedding(nids_vocab*DIM_IN);
 
-        /* Initialize the input matrix and the query, key, and value weight
-         * matrices to random numbers in [0,1]                                  */
-        const     auto dim_inputs = nids*DIM_IN;
-        constexpr auto dim_inout  = DIM_IN*DIM_OUT;
+        random_device rd;
+        mt19937 gen(rd());  // Use machine entropy as the random seed
+        normal_distribution<double> ndist(0., 1./sqrt(static_cast<double>(DIM_IN)));
 
-        vector<double> inputs(dim_inputs);
-        array<double, dim_inout> Wq, Wk, Wv;
-
-        random_device rd;  // Use machine entropy as the random seed
-        const auto seed = rd();
-        mt19937 gen(seed);
-        uniform_real_distribution<double> dist(0., 1.);
-
-        for (auto m = decltype(nids){0}; m < nids; ++m) {
-            const auto idx_m = m*DIM_IN;
+        for (auto v = decltype(nids_vocab){0}; v < nids_vocab; ++v) {
+            const auto idx_v = v*DIM_IN;
             for (auto i = decltype(DIM_IN){0}; i < DIM_IN; ++i) {
-                 inputs.at(idx_m + i) = dist(gen);
+                vocab_embedding.at(idx_v + i) = ndist(gen);
             }
         }
+
+
+        /* Encode the input text into token IDs and map each ID into the
+         * corresponding embedding vector, scaled by sqrt(DIM_IN) to keep
+         * magnitudes consistent                                                */
+        const auto &ids_input = tokenizer.encode(input_text);
+        const auto nids_input = ids_input.size();
+        const auto dim_inputs = nids_input*DIM_IN;
+
+        vector<double> inputs(dim_inputs);
+        const auto sqrt_dim_in = sqrt(static_cast<double>(DIM_IN));
+
+        for (auto m = decltype(nids_input){0}; m < nids_input; ++m) {
+            const auto idx_m_in  = m*DIM_IN;
+            const auto id_input  = ids_input.at(m);
+            assert(id_input < nids_vocab);
+            const auto idx_vocab = id_input*DIM_IN;
+
+            for (auto i = decltype(DIM_IN){0}; i < DIM_IN; ++i) {
+                 inputs.at(idx_m_in + i) = sqrt_dim_in*vocab_embedding.at(idx_vocab + i);
+            }
+        }
+
+
+        /* Initialize the query, key, and value weight matrices to random values
+         * NOTE: declared as std::vector so they are allocated on the heap.
+         *       std::array allocates on the stack and this can overflow for
+         *       very large DIM_IN*DIM_OUT.                                     */
+        constexpr auto dim_inout = DIM_IN*DIM_OUT;
+        vector<double> Wq(dim_inout), Wk(dim_inout), Wv(dim_inout);
+
+        // Xavier/Glorot distribution
+        constexpr auto xg_bound = sqrt(6./(static_cast<double>(DIM_IN) + static_cast<double>(DIM_OUT)));
+        uniform_real_distribution<double> xgdist(-xg_bound, xg_bound);
 
         for (auto i = decltype(DIM_IN){0}; i < DIM_IN; ++i) {
             const auto idx_i = i*DIM_OUT;
             for (auto j = decltype(DIM_OUT){0}; j < DIM_OUT; ++j) {
                 const auto ij = idx_i + j;
-                Wq.at(ij) = dist(gen);
-                Wk.at(ij) = dist(gen);
-                Wv.at(ij) = dist(gen);
+                Wq.at(ij) = xgdist(gen);
+                Wk.at(ij) = xgdist(gen);
+                Wv.at(ij) = xgdist(gen);
             }
         }
 
 
         // Build the query, key, and value matrices
-        const auto dim_qkv = nids*DIM_OUT;
+        const auto dim_qkv = nids_input*DIM_OUT;
         vector<double> queries(dim_qkv, 0.), keys(dim_qkv, 0.), values(dim_qkv, 0.);  // NOTE: initialize to zero
 
-        for (auto m = decltype(nids){0}; m < nids; ++m) {
+        for (auto m = decltype(nids_input){0}; m < nids_input; ++m) {
             const auto idx_m_in  = m*DIM_IN;
             const auto idx_m_out = m*DIM_OUT;
 
@@ -101,7 +129,7 @@ int main() {
         constexpr auto sqrt_dim_out_inv = 1./sqrt(static_cast<double>(DIM_OUT));
         vector<double> contexts(dim_qkv);  // nids*DIM_OUT
 
-        for (auto m = decltype(nids){0}; m < nids; ++m) {
+        for (auto m = decltype(nids_input){0}; m < nids_input; ++m) {
             const auto idx_m_out = m*DIM_OUT;
 
             /* Causal attention: each token ID in the input text only attends to
@@ -111,7 +139,7 @@ int main() {
              * defined here)                                                    */
             vector<double> attention_m(m+1);  // Instead of attention_m(nids)
 
-            for (auto n = decltype(nids){0}; n <= m; ++n) {
+            for (auto n = decltype(nids_input){0}; n <= m; ++n) {
                 const auto idx_n_out = n*DIM_OUT;
                 double attention_mn  = 0.;
 
@@ -133,7 +161,7 @@ int main() {
              * softmax                                                          */
             auto attention_m_max = -numeric_limits<double>::infinity();
 
-            for (auto n = decltype(nids){0}; n <= m; ++n) {
+            for (auto n = decltype(nids_input){0}; n <= m; ++n) {
                 if (attention_m.at(n) > attention_m_max) {
                     attention_m_max = attention_m.at(n);
                 }
@@ -142,7 +170,7 @@ int main() {
             assert(isfinite(attention_m_max));
             double sum_exp = 0.;
 
-            for (auto n = decltype(nids){0}; n <= m; ++n) {
+            for (auto n = decltype(nids_input){0}; n <= m; ++n) {
                 double exp_att    = exp(attention_m.at(n) - attention_m_max);
                 attention_m.at(n) = exp_att;
                 sum_exp          += exp_att;
@@ -156,7 +184,7 @@ int main() {
              * context vector for the current token
              * NOTE: swapping the more "natural" loop order (j out, n in) to
              *       improve the memory access pattern in the values matrix     */
-            for (auto n = decltype(nids){0}; n <= m; ++n) {
+            for (auto n = decltype(nids_input){0}; n <= m; ++n) {
                 const auto idx_n_out    = n*DIM_OUT;
                 const auto attention_mn = attention_m.at(n)/sum_exp;  // NOTE: attention_m.at(n) is NOT normalized
 
