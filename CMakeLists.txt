@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(EXE "llm")
 
-add_executable(${EXE} Main.cc Word_tokenizer.cc BPE_tokenizer.cc)
+add_executable(${EXE} Main.cc Word_tokenizer.cc BPE_tokenizer.cc Layer_normalization.cc)
 target_include_directories(${EXE} PRIVATE ${CMAKE_SOURCE_DIR}/include)
 
 add_custom_target(symlink_infile ALL

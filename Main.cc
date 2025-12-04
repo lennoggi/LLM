@@ -3,10 +3,13 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <limits>
 #include <random>
 
 #include "Check_parameters.hh"
 #include "Types.hh"
+#include "include/Declare_functions.hh"
+
 #include "Parameters.hh"
 
 using namespace std;
@@ -33,60 +36,74 @@ int main() {
         #endif
 
 
+        // Encode the input text into token IDs
+        const auto &ids_input = tokenizer.encode(input_text);
+        const auto nids_input = ids_input.size();
+
+
         /* Initialize a vector representation ("embedding") of each token in the
          * vocabulary with random numbers (to be optimized during training
          * later on)                                                            */
         const auto nids_vocab = tokenizer.vocab_token2id.size();
-        vector<double> vocab_embedding(nids_vocab*DIM_IN);
+        vector<double> vocab_embedding(nids_vocab*DIM);
 
         random_device rd;
-        mt19937 gen(rd());  // Use machine entropy as the random seed
-        normal_distribution<double> ndist(0., 1./sqrt(static_cast<double>(DIM_IN)));
+        #if (RANDOM_SEED > 0)
+        cout << "INFO: seed " << RANDOM_SEED
+             << " will be used to initialize the pseudo-random number generator. The LLM output will be reproducible." << endl;
+        mt19937 gen(RANDOM_SEED);
+        #else
+        cout << "INFO: machine entropy will be used to initialize the pseudo-random number generator. The LLM output will NOT be reproducible." << endl;
+        mt19937 gen(rd());
+        #endif
+        normal_distribution<double> ndist(0., 1./sqrt(static_cast<double>(DIM)));
 
         for (auto v = decltype(nids_vocab){0}; v < nids_vocab; ++v) {
-            const auto idx_v = v*DIM_IN;
-            for (auto i = decltype(DIM_IN){0}; i < DIM_IN; ++i) {
+            const auto idx_v = v*DIM;
+            for (auto i = decltype(DIM){0}; i < DIM; ++i) {
                 vocab_embedding.at(idx_v + i) = ndist(gen);
             }
         }
 
 
-        /* Encode the input text into token IDs and map each ID into the
-         * corresponding embedding vector, scaled by sqrt(DIM_IN) to keep
-         * magnitudes consistent                                                */
-        const auto &ids_input = tokenizer.encode(input_text);
-        const auto nids_input = ids_input.size();
-        const auto dim_inputs = nids_input*DIM_IN;
-
-        vector<double> inputs(dim_inputs);
-        const auto sqrt_dim_in = sqrt(static_cast<double>(DIM_IN));
+        // Initialize the positional embedding vectors with random numbers
+        const auto dim_tot = nids_input*DIM;
+        vector<double> pos_embeddings(dim_tot);
 
         for (auto m = decltype(nids_input){0}; m < nids_input; ++m) {
-            const auto idx_m_in  = m*DIM_IN;
-            const auto id_input  = ids_input.at(m);
-            assert(id_input < nids_vocab);
-            const auto idx_vocab = id_input*DIM_IN;
-
-            for (auto i = decltype(DIM_IN){0}; i < DIM_IN; ++i) {
-                 inputs.at(idx_m_in + i) = sqrt_dim_in*vocab_embedding.at(idx_vocab + i);
+            const auto idx_m = m*DIM;
+            for (auto i = decltype(DIM){0}; i < DIM; ++i) {
+                pos_embeddings.at(idx_m + i) = ndist(gen);
             }
         }
+
+
+        /* Initialize the layer normalization scale and shift vectors to 1's
+         * and 0's, respectively
+         * NOTE: one set of scale/shift vectors per application of the layer
+         *       normalization:
+         *         1. Before the attention block
+         *         2. Before the feed-forward neural network
+         *         3. Before predicting the new token                           */
+        vector<double> scale_attention(DIM, 1.), shift_attention(DIM, 0.);
+        vector<double>       scale_ffn(DIM, 1.),       shift_ffn(DIM, 0.);
+        // /*TODO*/ vector<double> scale_final(DIM, 1.), shift_final(DIM, 0.);
 
 
         /* Initialize the query, key, and value weight matrices to random values
          * NOTE: declared as std::vector so they are allocated on the heap.
          *       std::array allocates on the stack and this can overflow for
-         *       very large DIM_IN*DIM_OUT.                                     */
-        constexpr auto dim_inout = DIM_IN*DIM_OUT;
-        vector<double> Wq(dim_inout), Wk(dim_inout), Wv(dim_inout);
+         *       very large DIM*DIM.                                            */
+        constexpr auto dim_sq = DIM*DIM;
+        vector<double> Wq(dim_sq), Wk(dim_sq), Wv(dim_sq);
 
         // Xavier/Glorot distribution
-        constexpr auto xg_bound = sqrt(6./(static_cast<double>(DIM_IN) + static_cast<double>(DIM_OUT)));
+        constexpr auto xg_bound = sqrt(3./(static_cast<double>(DIM)));
         uniform_real_distribution<double> xgdist(-xg_bound, xg_bound);
 
-        for (auto i = decltype(DIM_IN){0}; i < DIM_IN; ++i) {
-            const auto idx_i = i*DIM_OUT;
-            for (auto j = decltype(DIM_OUT){0}; j < DIM_OUT; ++j) {
+        for (auto i = decltype(DIM){0}; i < DIM; ++i) {
+            const auto idx_i = i*DIM;
+            for (auto j = decltype(DIM){0}; j < DIM; ++j) {
                 const auto ij = idx_i + j;
                 Wq.at(ij) = xgdist(gen);
                 Wk.at(ij) = xgdist(gen);
@@ -95,103 +112,183 @@ int main() {
         }
 
 
-        // Build the query, key, and value matrices
-        const auto dim_qkv = nids_input*DIM_OUT;
-        vector<double> queries(dim_qkv, 0.), keys(dim_qkv, 0.), values(dim_qkv, 0.);  // NOTE: initialize to zero
+        /* ========
+         * Training
+         * ======== */
+        for (auto it = decltype(NTRAIN){0}; it < NTRAIN; ++it) {
+            /* ------------
+             * Forward pass
+             * ------------ */
+            /* Map each input token ID into the corresponding embedding vector
+             * (scaled by sqrt(DIM) to keep magnitudes consistent) and add the
+             * corresponding positional encoding vectors                        */
+            vector<double> inputs(dim_tot);
+            constexpr auto sqrt_dim = sqrt(static_cast<double>(DIM));
 
-        for (auto m = decltype(nids_input){0}; m < nids_input; ++m) {
-            const auto idx_m_in  = m*DIM_IN;
-            const auto idx_m_out = m*DIM_OUT;
+            for (auto m = decltype(nids_input){0}; m < nids_input; ++m) {
+                const auto idx_m = m*DIM;
+                const auto id_input = ids_input.at(m);
+                assert(id_input < nids_vocab);
+                const auto idx_vocab = id_input*DIM;
 
-            /* NOTE: swapping the more "natural" loop order (j out, k in) to
-             *       improve the memory access pattern in Wq, Wk, Wv            */
-            for (auto k = decltype(DIM_IN){0}; k < DIM_IN; ++k) {
-                const auto inputs_mk = inputs.at(idx_m_in + k);
-                const auto idx_k     = k*DIM_OUT;
-
-                for (auto j = decltype(DIM_OUT){0}; j < DIM_OUT; ++j) {
-                    const auto mj = idx_m_out + j;
-                    const auto kj = idx_k + j;
-
-                    queries.at(mj) += inputs_mk*Wq.at(kj);
-                       keys.at(mj) += inputs_mk*Wk.at(kj);
-                     values.at(mj) += inputs_mk*Wv.at(kj);
-                }
-            }
-        }
-
-
-        /* Compute the attention scores and the context vectors (matrix), i.e.,
-         * the sum of the value vectors (columns of the values matrix) weighted
-         * by the attention scores along the rows of the attention matrix
-         * NOTE: no need to store the full attention matrix: only compute each
-         *       row and the corresponding context vector                       */
-        constexpr auto sqrt_dim_out_inv = 1./sqrt(static_cast<double>(DIM_OUT));
-        vector<double> contexts(dim_qkv);  // nids*DIM_OUT
-
-        for (auto m = decltype(nids_input){0}; m < nids_input; ++m) {
-            const auto idx_m_out = m*DIM_OUT;
-
-            /* Causal attention: each token ID in the input text only attends to
-             * all the previous ones, so that the attention scores in the upper
-             * triangular part of the attention scores matrix (i.e., all the
-             * attention scores for n > m for row/token m) are zero (not even
-             * defined here)                                                    */
-            vector<double> attention_m(m+1);  // Instead of attention_m(nids)
-
-            for (auto n = decltype(nids_input){0}; n <= m; ++n) {
-                const auto idx_n_out = n*DIM_OUT;
-                double attention_mn  = 0.;
-
-                for (auto l = decltype(DIM_OUT){0}; l < DIM_OUT; ++l) {
-                    const auto ml = idx_m_out + l;
-                    const auto nl = idx_n_out + l;
-                    attention_mn += queries.at(ml)*keys.at(nl);
-                }
-
-                /* Scale the attention score by
-                 * sqrt(len(keys[:,1]) = sqrt(DIM_OUT) to improve training
-                 * behavior later on                                        */
-                attention_m.at(n) = attention_mn*sqrt_dim_out_inv;
-            }
-
-
-            /* Normalize the attention scores for the current token (i.e., for
-             * the current row of the attention matrix) using a stabilized
-             * softmax                                                          */
-            auto attention_m_max = -numeric_limits<double>::infinity();
-
-            for (auto n = decltype(nids_input){0}; n <= m; ++n) {
-                if (attention_m.at(n) > attention_m_max) {
-                    attention_m_max = attention_m.at(n);
+                for (auto i = decltype(DIM){0}; i < DIM; ++i) {
+                    const auto mi = idx_m + i;
+                    inputs.at(mi) = sqrt_dim*vocab_embedding.at(idx_vocab + i) + pos_embeddings.at(mi);
                 }
             }
 
-            assert(isfinite(attention_m_max));
-            double sum_exp = 0.;
 
-            for (auto n = decltype(nids_input){0}; n <= m; ++n) {
-                double exp_att    = exp(attention_m.at(n) - attention_m_max);
-                attention_m.at(n) = exp_att;
-                sum_exp          += exp_att;
-            }
-
-            assert(sum_exp > 0.);
+            /* Layer normalization: have the components of each input embedding
+             * vector average out to 0 and have variance 1, but then scale and
+             * shift them by trainable parameters, to make training more stable */
+            layer_norm(inputs, scale_attention, shift_attention);
 
 
-            /* Finish normalizing the attention scores for the current token (i.e.,
-             * for the current row of the attention matrix) and calculate the
-             * context vector for the current token
-             * NOTE: swapping the more "natural" loop order (j out, n in) to
-             *       improve the memory access pattern in the values matrix     */
-            for (auto n = decltype(nids_input){0}; n <= m; ++n) {
-                const auto idx_n_out    = n*DIM_OUT;
-                const auto attention_mn = attention_m.at(n)/sum_exp;  // NOTE: attention_m.at(n) is NOT normalized
+            // Build the query, key, and value matrices
+            vector<double> queries(dim_tot, 0.), keys(dim_tot, 0.), values(dim_tot, 0.);  // NOTE: initialize to zero
 
-                for (auto j = decltype(DIM_OUT){0}; j < DIM_OUT; ++j) {
-                    contexts.at(idx_m_out + j) += attention_mn*values.at(idx_n_out + j);
+            for (auto m = decltype(nids_input){0}; m < nids_input; ++m) {
+                const auto idx_m = m*DIM;
+
+                /* NOTE: swapping the more "natural" loop order (j out, k in) to
+                 *       improve the memory access pattern in Wq, Wk, Wv        */
+                for (auto k = decltype(DIM){0}; k < DIM; ++k) {
+                    const auto inputs_mk = inputs.at(idx_m + k);
+                    const auto idx_k     = k*DIM;
+
+                    for (auto i = decltype(DIM){0}; i < DIM; ++i) {
+                        const auto mi = idx_m + i;
+                        const auto ki = idx_k + i;
+
+                        queries.at(mi) += inputs_mk*Wq.at(ki);
+                           keys.at(mi) += inputs_mk*Wk.at(ki);
+                         values.at(mi) += inputs_mk*Wv.at(ki);
+                    }
                 }
             }
+
+
+            /* Compute the attention scores and the context vectors (matrix),
+             * i.e., the sum of the value vectors (columns of the values matrix)
+             * weighted by the attention scores along the rows of the attention
+             * matrix
+             * NOTE: no need to store the full attention matrix: only compute
+             *       each row and the corresponding context vector              */
+            /* TODO: allow for multi-head attention; need to swap
+             *   nds_input<->nheads to allow parallelization by head. Then the
+             *   normalization factor will become 1/sqrt(DIM_OUT/nheads)        */
+            constexpr auto sqrt_dim_inv = 1./sqrt_dim;
+            vector<double> contexts(dim_tot);
+
+            for (auto m = decltype(nids_input){0}; m < nids_input; ++m) {
+                const auto idx_m = m*DIM;
+
+                /* Causal attention: each token ID in the input text only attends
+                 * to all the previous ones, so that the attention scores in the
+                 * upper triangular part of the attention scores matrix (i.e.,
+                 * all the attention scores for n > m for row/token m) are zero
+                 * (not even defined here)                                      */
+                vector<double> attention_m(m+1);  // Instead of attention_m(nids)
+
+                for (auto n = decltype(nids_input){0}; n <= m; ++n) {
+                    const auto idx_n = n*DIM;
+                    double attention_mn = 0.;
+
+                    for (auto l = decltype(DIM){0}; l < DIM; ++l) {
+                        const auto ml = idx_m + l;
+                        const auto nl = idx_n + l;
+                        attention_mn += queries.at(ml)*keys.at(nl);
+                    }
+
+                    /* Scale the attention score by
+                     * sqrt(len(keys[:,1]) = sqrt(DIM) to improve training
+                     * behavior later on                                        */
+                    attention_m.at(n) = attention_mn*sqrt_dim_inv;
+                }
+
+
+                /* Normalize the attention scores for the current token (i.e.,
+                 * for the current row of the attention matrix) using a
+                 * stabilized softmax                                           */
+                auto attention_m_max = -numeric_limits<double>::infinity();
+
+                for (auto n = decltype(nids_input){0}; n <= m; ++n) {
+                    if (attention_m.at(n) > attention_m_max) {
+                        attention_m_max = attention_m.at(n);
+                    }
+                }
+
+                assert(isfinite(attention_m_max));
+                double sum_exp = 0.;
+
+                for (auto n = decltype(nids_input){0}; n <= m; ++n) {
+                    double exp_att    = exp(attention_m.at(n) - attention_m_max);
+                    attention_m.at(n) = exp_att;
+                    sum_exp          += exp_att;
+                }
+
+                assert(sum_exp > 0.);
+
+
+                /* Finish normalizing the attention scores for the current token
+                 * (i.e., for the current row of the attention matrix) and
+                 * calculate the context vector for the current token
+                 * NOTE: swapping the more "natural" loop order (j out, n in) to
+                 *       improve the memory access pattern in the values matrix */
+                for (auto n = decltype(nids_input){0}; n <= m; ++n) {
+                    const auto idx_n = n*DIM;
+                    const auto attention_mn = attention_m.at(n)/sum_exp;  // NOTE: attention_m.at(n) is NOT normalized
+
+                    for (auto i = decltype(DIM){0}; i < DIM; ++i) {
+                        contexts.at(idx_m + i) += attention_mn*values.at(idx_n + i);
+                    }
+                }
+            }
+
+
+            // TODO: dropout
+
+
+            /* Shortcut connection: add the context vectors to the corresponding
+             * input vectors to preserve the quality of the gradient flow during
+             * the backward step
+             * NOTE 1: in models where the context vector size differs from the
+             *   input vector size, a projection of the inputs into the
+             *   context-vector-sized vector space is required. However, having
+             *   these two dimensions differ is not customary in the LLM
+             *   community.                                                     */
+            /* XXX: move this into the attention loop (m loop) above if dropout
+             *      is not implemented                                          */
+            for (auto m = decltype(nids_input){0}; m < nids_input; ++m) {
+                const auto idx_m = m*DIM;
+                for (auto i = decltype(DIM){0}; i < DIM; ++i) {
+                    const auto mi = idx_m + i;
+                    inputs.at(mi) += contexts.at(mi);
+                }
+            }
+
+
+            // Another layer normalization
+            layer_norm(inputs, scale_ffn, shift_ffn);
+
+
+            // TODO: feed-forward NN with 4X expansion and contraction, dropout again
+
+
+            // TODO: layer normalization
+
+
+            // TODO: predict the next token (include max_new token and context size)
+
+
+
+            /* -------------------
+             * TODO: backward pass
+             * ------------------- */
+
+            // XXX
+            cout << "Training epoch " << it << " completed" << endl;
+            // XXX
         }
 
 

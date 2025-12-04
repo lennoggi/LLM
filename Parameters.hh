@@ -46,13 +46,34 @@
 #define BPE_END_OF_WORD "@"
 
 
-/* ----------------------------------------------------------------------------
- * Input and output token embedding dimensions (i.e., each token is converted
- * into a vector of dimension EMB_DIM_IN and the query, key, and value matrices
- * have dimensions EMB_DIM_IN*EMB_DIM_OUT)
- * ---------------------------------------------------------------------------- */
-#define DIM_IN  3
-#define DIM_OUT 5
+/* -----------------------------------------------------------------------------
+ * Seed for the pseudo-random number generator. If positive, the seed will be
+ * used and the output of the LLM will be reproducible; if negative, the machine
+ * entropy will be used instead and results won't be reproducible.
+ * NOTE: the seed should be a uint32_t . If it's too long, it will be implicitly
+ *   converted into a uint32_t; if it's a float/double, it will be truncated.
+ * -----------------------------------------------------------------------------*/
+#define RANDOM_SEED 123
+//#define RANDOM_SEED -1
+
+
+/* -------------------------
+ * Token embedding dimension
+ * ------------------------- */
+#define DIM 5
+
+
+/* ----------------------------------------
+ * Number of training iterations ("epochs")
+ * ---------------------------------------- */
+#define NTRAIN 10000
+
+
+/* --------------------------------------------------------------------------
+ * Set the variance of the elements of a token embedding vector to this small
+ * value if that variance is exactly zero
+ * -------------------------------------------------------------------------- */
+#define VAR_TINY 1.e-05
 
 
 /* -----------------------------------------------------------------------------
