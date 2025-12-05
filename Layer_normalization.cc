@@ -55,8 +55,8 @@ void layer_norm(      vector<double> &vecs,
         /* NOTE: sum_diffs==0 can only happen if all elements in
          *       vecs.at(mi) are the same, which is very unlikely     */
         assert(sum_diffs >= 0.);
-        constexpr auto sqrt_var_inv_fallback = 1./std::sqrt(static_cast<double>(VAR_TINY));
-        const     auto sqrt_var_inv          = (sum_diffs == 0.) ? sqrt_var_inv_fallback : std::sqrt(static_cast<double>(vec_size-1)/sum_diffs);
+        constexpr auto sqrt_var_inv_fallback = 1./sqrt(static_cast<double>(VAR_TINY));
+        const     auto sqrt_var_inv          = (sum_diffs == 0.) ? sqrt_var_inv_fallback : sqrt(static_cast<double>(vec_size-1)/sum_diffs);
         assert(sqrt_var_inv > 0.);
 
         for (auto i = decltype(vec_size){0}; i < vec_size; ++i) {

@@ -90,14 +90,14 @@ int main() {
         constexpr auto dim_sq = DIM*DIM;
         vector<double> Wq(dim_sq), Wk(dim_sq), Wv(dim_sq);
 
-        // Xavier/Glorot distribution
-        constexpr auto xg_bound = sqrt(3./(static_cast<double>(DIM)));
-        uniform_real_distribution<double> xgdist(-xg_bound, xg_bound);
+        // Xavier/Glorot uniform distribution
+        constexpr auto xg_qkv_bound = sqrt(3./(static_cast<double>(DIM)));
+        uniform_real_distribution<double> xg_qkv_udist(-xg_qkv_bound, xg_qkv_bound);
 
         for (auto idx = decltype(dim_sq){0}; idx < dim_sq; ++idx) {
-            Wq.at(idx) = xgdist(gen);
-            Wk.at(idx) = xgdist(gen);
-            Wv.at(idx) = xgdist(gen);
+            Wq.at(idx) = xg_qkv_udist(gen);
+            Wk.at(idx) = xg_qkv_udist(gen);
+            Wv.at(idx) = xg_qkv_udist(gen);
         }
 
 
@@ -112,10 +112,36 @@ int main() {
         }
 
 
-        /* Preallocate the input and context vectors and the query, key, and
-         * value matrices to improve performance                                */
+        /* Initialize the feed-forward neural network weights for the two layers
+         * randomly, and the two biases to zero
+         * NOTE: think of ffn_W1 and ffn_W2 as a matrices with dimensions:
+         *   - ffn_W1(DIM, DIM*FFN_EXPANSION_FACTOR)
+         *   - ffn_W2(DIM*FFN_EXPANSION_FACTOR, DIM)                            */
+        constexpr auto dim_ffn_expanded = DIM*FFN_EXPANSION_FACTOR;
+        constexpr auto dim_ffn_weights  = DIM*dim_ffn_expanded;
+
+        vector<double> ffn_W1(dim_ffn_weights),      ffn_W2(dim_ffn_weights);
+        vector<double> ffn_b1(dim_ffn_expanded, 0.), ffn_b2(dim_ffn_expanded, 0.);
+
+        // Xavier/Glorot normal distribution
+        constexpr auto xg_ffn_std = sqrt(6./(static_cast<double>(DIM) + static_cast<double>(dim_ffn_expanded)));
+        normal_distribution<double> xg_ffn_ndist(0., xg_ffn_std);
+
+        for (auto idx = decltype(dim_ffn_weights){0}; idx < dim_ffn_weights; ++idx) {
+            ffn_W1.at(idx) = xg_ffn_ndist(gen);
+            ffn_W2.at(idx) = xg_ffn_ndist(gen);
+        }
+
+
+        /* Preallocate the input and context vectors, the query, key, and value
+         * matrices, and the FFN hidden iand output layers to improve
+         * performance                                                          */
         vector<double> inputs(dim_tot), contexts(dim_tot);
         vector<double> queries(dim_tot), keys(dim_tot), values(dim_tot);
+
+        const auto dim_tot_expanded = nids_input*dim_ffn_expanded;
+        vector<double> ffn_h(dim_tot_expanded);
+        vector<double> ffn_out(dim_tot);
 
 
 
@@ -261,29 +287,59 @@ int main() {
              *   expectation value over the context vector constant.
              * Shortcut connection: add the context vectors to the corresponding
              *   input vectors to preserve the quality of the gradient flow
-             *   during the backward step
-             * NOTE: this could be moved to into the attention loop (m loop)
-             *       above, but the plain loop here is more straightforward     */
-            for (auto idx = decltype(dim_tot){0}; idx < dim_tot; ++idx) {
-                if constexpr (DROPOUT_PROB > 0.) {
-                    const auto x = udist(gen);
-                    if (x < DROPOUT_PROB) {
-                        contexts.at(idx) = 0.;
-                    } else {
-                        constexpr auto dropout_scale = 1./(1. - DROPOUT_PROB);
-                        contexts.at(idx) *= dropout_scale;
-                    }
-                }
-
-                inputs.at(idx) += contexts.at(idx);
-            }
-
+             *   during the backward step                                       */
+            skip_conn_dropout(inputs, contexts, udist, gen);
 
             // Another layer normalization
             layer_norm(inputs, scale_ffn, shift_ffn);
 
 
-            // TODO: feed-forward NN with 4X expansion and contraction, dropout again
+            /* Expanding-contracting two-layer feed-forward neural network:
+             *   FFN(x) = (GELU(x*W1 + b1))*W2 + b2                             */
+            for (auto m = decltype(nids_input){0}; m < nids_input; ++m) {
+                const auto idx_m     = m*DIM;
+                const auto idx_m_exp = m*dim_ffn_expanded;
+
+                for (auto r = decltype(dim_ffn_expanded){0}; r < dim_ffn_expanded; ++r) {
+                    ffn_h.at(idx_m_exp + r) = ffn_b1.at(r);
+                }
+
+                for (auto i = decltype(DIM){0}; i < DIM; ++i) {
+                    const auto inputs_mi = inputs.at(idx_m + i);
+                    const auto idx_i_exp = i*dim_ffn_expanded;
+
+                    for (auto r = decltype(dim_ffn_expanded){0}; r < dim_ffn_expanded; ++r) {
+                        ffn_h.at(idx_m_exp + r) += inputs_mi*ffn_W1.at(idx_i_exp + r);
+                    }
+                }
+            }
+
+            // Not quite GELU, just an approximation
+            GELU_approx(ffn_h);
+
+            for (auto m = decltype(nids_input){0}; m < nids_input; ++m) {
+                const auto idx_m     = m*DIM;
+                const auto idx_m_exp = m*dim_ffn_expanded;
+
+                for (auto i = decltype(DIM){0}; i < DIM; ++i) {
+                    ffn_out.at(idx_m + i) = ffn_b2.at(i);
+                }
+
+                for (auto r = decltype(dim_ffn_expanded){0}; r < dim_ffn_expanded; ++r) {
+                    const auto ffn_h_mr = ffn_h.at(idx_m_exp + r);
+                    const auto idx_r    = r*DIM;
+
+                    for (auto i = decltype(DIM){0}; i < DIM; ++i) {
+                        ffn_out.at(idx_m + i) += ffn_h_mr*ffn_W2.at(idx_r + i);
+                    }
+                }
+            }
+
+
+            /* Apply dropout (if enabled) to the network's output and set up a
+             * skip connection between that and the input vectors               */
+            skip_conn_dropout(inputs, ffn_out, udist, gen);
+
 
 
             // TODO: layer normalization

@@ -87,6 +87,13 @@
 constexpr inline double DROPOUT_PROB = 0.1;
 
 
+/* ------------------------------------------------------------------------
+ * Expansion factor for the two-layer feed-forward neural network with GELU
+ * activation function used after the attention layer
+ * ------------------------------------------------------------------------ */
+#define FFN_EXPANSION_FACTOR 4
+
+
 /* -----------------------------------------------------------------------------
  * Context size, i.e., the number of token IDs used to predict the next token ID
  * during training
