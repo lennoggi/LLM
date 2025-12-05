@@ -112,6 +112,12 @@ int main() {
         }
 
 
+        /* Preallocate the input and context vectors and the query, key, and
+         * value matrices to improve performance                                */
+        vector<double> inputs(dim_tot), contexts(dim_tot);
+        vector<double> queries(dim_tot), keys(dim_tot), values(dim_tot);
+
+
 
         /* ========
          * Training
@@ -123,7 +129,6 @@ int main() {
             /* Map each input token ID into the corresponding embedding vector
              * (scaled by sqrt(DIM) to keep magnitudes consistent) and add the
              * corresponding positional encoding vectors                        */
-            vector<double> inputs(dim_tot);
             constexpr auto sqrt_dim = sqrt(static_cast<double>(DIM));
 
             for (auto m = decltype(nids_input){0}; m < nids_input; ++m) {
@@ -146,7 +151,9 @@ int main() {
 
 
             // Build the query, key, and value matrices
-            vector<double> queries(dim_tot, 0.), keys(dim_tot, 0.), values(dim_tot, 0.);  // NOTE: initialize to zero
+            fill(queries.begin(), queries.end(), 0.);
+            fill(   keys.begin(),    keys.end(), 0.);
+            fill( values.begin(),  values.end(), 0.);
 
             for (auto m = decltype(nids_input){0}; m < nids_input; ++m) {
                 const auto idx_m = m*DIM;
@@ -179,7 +186,6 @@ int main() {
              *   nds_input<->nheads to allow parallelization by head. Then the
              *   normalization factor will become 1/sqrt(DIM_OUT/nheads)        */
             constexpr auto sqrt_dim_inv = 1./sqrt_dim;
-            vector<double> contexts(dim_tot);
 
             for (auto m = decltype(nids_input){0}; m < nids_input; ++m) {
                 const auto idx_m = m*DIM;
