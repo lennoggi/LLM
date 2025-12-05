@@ -80,7 +80,7 @@ int main() {
          *         3. Before predicting the new token                           */
         vector<double> scale_attention(DIM, 1.), shift_attention(DIM, 0.);
         vector<double>       scale_ffn(DIM, 1.),       shift_ffn(DIM, 0.);
-        // /*TODO*/ vector<double> scale_final(DIM, 1.), shift_final(DIM, 0.);
+        vector<double>     scale_final(DIM, 1.),     shift_final(DIM, 0.);
 
 
         /* Initialize the query, key, and value weight matrices to random values
@@ -168,6 +168,9 @@ int main() {
                     inputs.at(mi) = sqrt_dim*vocab_embedding.at(idx_vocab + i) + pos_embeddings.at(mi);
                 }
             }
+
+
+            // TODO: dropout of 'inputs' without any skip connections
 
 
             /* Layer normalization: have the components of each input embedding
@@ -279,15 +282,14 @@ int main() {
             }
 
 
-            /* ***** Dropout + Shortcut connection *****
-             * Dropout: randomly set some of the components of the context
+            /* *Dropout:* randomly set some of the components of the context
              *   vectors to zero to avoid having the model overly rely on a few
              *   components during training. On the other hand, components which
              *   are not set to zero must be rescaled so as to keep the
              *   expectation value over the context vector constant.
-             * Shortcut connection: add the context vectors to the corresponding
-             *   input vectors to preserve the quality of the gradient flow
-             *   during the backward step                                       */
+             * *Shortcut connection:* add the context vectors to the
+             *   corresponding input vectors to preserve the quality of the
+             *   gradient flow during the backward step                         */
             skip_conn_dropout(inputs, contexts, udist, gen);
 
             // Another layer normalization
@@ -341,8 +343,9 @@ int main() {
             skip_conn_dropout(inputs, ffn_out, udist, gen);
 
 
+            // Another layer normalization
+            layer_norm(inputs, scale_final, shift_final);
 
-            // TODO: layer normalization
 
 
             // TODO: predict the next token (include max_new token and context size)
