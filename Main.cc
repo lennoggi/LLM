@@ -3,7 +3,6 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
-#include <limits>
 #include <random>
 
 #include "Check_parameters.hh"
@@ -63,7 +62,8 @@ int main() {
 
 
         // Initialize the positional embedding vectors with random numbers
-        const auto dim_tot = nids_input*DIM;
+        const auto dim_tot        = nids_input*DIM;
+        const auto idx_last_input = dim_tot - DIM;  // = (nids_input-1)*DIM
         vector<double> pos_embeddings(dim_tot);
 
         for (auto &el : pos_embeddings) {
@@ -91,13 +91,13 @@ int main() {
         vector<double> Wq(dim_sq), Wk(dim_sq), Wv(dim_sq);
 
         // Xavier/Glorot uniform distribution
-        constexpr auto xg_qkv_bound = sqrt(3./(static_cast<double>(DIM)));
-        uniform_real_distribution<double> xg_qkv_udist(-xg_qkv_bound, xg_qkv_bound);
+        constexpr auto xg_dim_bound = sqrt(3./(static_cast<double>(DIM)));
+        uniform_real_distribution<double> xg_dim_udist(-xg_dim_bound, xg_dim_bound);
 
         for (auto idx = decltype(dim_sq){0}; idx < dim_sq; ++idx) {
-            Wq.at(idx) = xg_qkv_udist(gen);
-            Wk.at(idx) = xg_qkv_udist(gen);
-            Wv.at(idx) = xg_qkv_udist(gen);
+            Wq.at(idx) = xg_dim_udist(gen);
+            Wk.at(idx) = xg_dim_udist(gen);
+            Wv.at(idx) = xg_dim_udist(gen);
         }
 
 
@@ -113,7 +113,7 @@ int main() {
 
 
         /* Initialize the feed-forward neural network weights for the two layers
-         * randomly, and the two biases to zero
+         * randomly, and the biases to zero
          * NOTE: think of ffn_W1 and ffn_W2 as a matrices with dimensions:
          *   - ffn_W1(DIM, DIM*FFN_EXPANSION_FACTOR)
          *   - ffn_W2(DIM*FFN_EXPANSION_FACTOR, DIM)                            */
@@ -133,15 +133,32 @@ int main() {
         }
 
 
+        /* Initialize the logits weights to the vocabulary embedding and the
+         * biases to zero
+         * NOTE: think of 'logits_W' as a (DIM, nids_vocab)-shaped matrix       */
+        const auto dim_logits_weights = DIM*nids_vocab;
+        vector<double> logits_W(dim_logits_weights);
+        vector<double> logits_b(nids_vocab, 0.);
+
+        for (auto v = decltype(nids_vocab){0}; v < nids_vocab; ++v) {
+            const auto idx_v = v*DIM;
+            for (auto i = decltype(DIM){0}; i < DIM; ++i) {
+                logits_W.at(i*nids_input + v) = vocab_embedding.at(idx_v + i);
+            }
+        }
+
+
         /* Preallocate the input and context vectors, the query, key, and value
-         * matrices, and the FFN hidden iand output layers to improve
-         * performance                                                          */
+         * matrices, and the FFN hidden iand output layers, and the last logits
+         * vector to improve performance                                        */
         vector<double> inputs(dim_tot), contexts(dim_tot);
         vector<double> queries(dim_tot), keys(dim_tot), values(dim_tot);
 
         const auto dim_tot_expanded = nids_input*dim_ffn_expanded;
         vector<double> ffn_h(dim_tot_expanded);
         vector<double> ffn_out(dim_tot);
+
+        vector<double> last_logits(nids_vocab);
 
 
 
@@ -242,38 +259,17 @@ int main() {
                     attention_m.at(n) = attention_mn*sqrt_dim_inv;
                 }
 
-
                 /* Normalize the attention scores for the current token (i.e.,
                  * for the current row of the attention matrix) using a
                  * stabilized softmax                                           */
-                auto attention_m_max = -numeric_limits<double>::infinity();
+                softmax(attention_m);
 
-                for (auto n = decltype(nids_input){0}; n <= m; ++n) {
-                    if (attention_m.at(n) > attention_m_max) {
-                        attention_m_max = attention_m.at(n);
-                    }
-                }
-
-                assert(isfinite(attention_m_max));
-                double sum_exp = 0.;
-
-                for (auto n = decltype(nids_input){0}; n <= m; ++n) {
-                    double exp_att    = exp(attention_m.at(n) - attention_m_max);
-                    attention_m.at(n) = exp_att;
-                    sum_exp          += exp_att;
-                }
-
-                assert(sum_exp > 0.);
-
-
-                /* Finish normalizing the attention scores for the current token
-                 * (i.e., for the current row of the attention matrix) and
-                 * calculate the context vector for the current token
+                /* Calculate the context vector for the current token
                  * NOTE: swapping the more "natural" loop order (j out, n in) to
                  *       improve the memory access pattern in the values matrix */
                 for (auto n = decltype(nids_input){0}; n <= m; ++n) {
                     const auto idx_n = n*DIM;
-                    const auto attention_mn = attention_m.at(n)/sum_exp;  // NOTE: attention_m.at(n) is NOT normalized
+                    const auto attention_mn = attention_m.at(n);
 
                     for (auto i = decltype(DIM){0}; i < DIM; ++i) {
                         contexts.at(idx_m + i) += attention_mn*values.at(idx_n + i);
@@ -347,8 +343,30 @@ int main() {
             layer_norm(inputs, scale_final, shift_final);
 
 
+            // Build the logits vector corresponding to the last input token/row
+            for (auto v = decltype(nids_vocab){0}; v < nids_vocab; ++v) {
+                last_logits.at(v) = logits_b.at(v);
+            }
+
+            for (auto i = decltype(DIM){0}; i < DIM; ++i) {
+                const auto idx_i       = i*nids_vocab;
+                const auto inputs_last = inputs.at(idx_last_input + i);
+
+                for (auto v = decltype(nids_vocab){0}; v < nids_vocab; ++v) {
+                    last_logits.at(v) += inputs_last*logits_W.at(idx_i + v);
+                }
+            }
+
+            softmax(last_logits);
+
 
             // TODO: predict the next token (include max_new token and context size)
+
+// XXX
+//for (const auto &logit : last_logits) {
+//    cout << logit << " ";
+//}
+// XXX
 
 
 
@@ -356,9 +374,7 @@ int main() {
              * TODO: backward pass
              * ------------------- */
 
-            // XXX
             cout << "Training epoch " << it << " completed" << endl;
-            // XXX
         }
 
 
