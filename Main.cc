@@ -264,7 +264,8 @@ int main() {
                     if (x < DROPOUT_PROB) {
                         contexts.at(idx) = 0.;
                     } else {
-                        contexts.at(idx) *= 1./(1. - DROPOUT_PROB);
+                        constexpr auto dropout_scale = 1./(1. - DROPOUT_PROB);
+                        contexts.at(idx) *= dropout_scale;
                     }
                 }
 
