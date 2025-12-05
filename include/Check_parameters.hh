@@ -10,6 +10,7 @@ static_assert(DIM > 1);  // At least 2 for the variance of each token embedding 
 
 static_assert(NTRAIN > 0);
 static_assert(VAR_TINY > 0. and VAR_TINY < 1.);  // Should be positive, but "small"
+static_assert(DROPOUT_PROB <= 1.);  // Negative means dropout is disabled
 
 //static_assert(CONTEXT_SIZE > 0);
 static_assert(VERBOSE or not VERBOSE);

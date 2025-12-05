@@ -35,7 +35,6 @@ int main() {
         return 1;  // Not reached
         #endif
 
-
         // Encode the input text into token IDs
         const auto &ids_input = tokenizer.encode(input_text);
         const auto nids_input = ids_input.size();
@@ -58,11 +57,8 @@ int main() {
         #endif
         normal_distribution<double> ndist(0., 1./sqrt(static_cast<double>(DIM)));
 
-        for (auto v = decltype(nids_vocab){0}; v < nids_vocab; ++v) {
-            const auto idx_v = v*DIM;
-            for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-                vocab_embedding.at(idx_v + i) = ndist(gen);
-            }
+        for (auto &el : vocab_embedding) {
+            el = ndist(gen);
         }
 
 
@@ -70,11 +66,8 @@ int main() {
         const auto dim_tot = nids_input*DIM;
         vector<double> pos_embeddings(dim_tot);
 
-        for (auto m = decltype(nids_input){0}; m < nids_input; ++m) {
-            const auto idx_m = m*DIM;
-            for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-                pos_embeddings.at(idx_m + i) = ndist(gen);
-            }
+        for (auto &el : pos_embeddings) {
+            el = ndist(gen);
         }
 
 
@@ -101,15 +94,23 @@ int main() {
         constexpr auto xg_bound = sqrt(3./(static_cast<double>(DIM)));
         uniform_real_distribution<double> xgdist(-xg_bound, xg_bound);
 
-        for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-            const auto idx_i = i*DIM;
-            for (auto j = decltype(DIM){0}; j < DIM; ++j) {
-                const auto ij = idx_i + j;
-                Wq.at(ij) = xgdist(gen);
-                Wk.at(ij) = xgdist(gen);
-                Wv.at(ij) = xgdist(gen);
-            }
+        for (auto idx = decltype(dim_sq){0}; idx < dim_sq; ++idx) {
+            Wq.at(idx) = xgdist(gen);
+            Wk.at(idx) = xgdist(gen);
+            Wv.at(idx) = xgdist(gen);
         }
+
+
+        /* Initialize a uniform real distribution in [0,1] for the dropout (only
+         * used if needed                                                       */
+        uniform_real_distribution<double> udist(0., 1.);
+
+        if constexpr (DROPOUT_PROB > 0.) {
+            cout << "INFO: dropout enabled with rate " << DROPOUT_PROB << endl;
+        } else {
+            cout << "INFO: dropout disabled" << endl;
+        }
+
 
 
         /* ========
@@ -246,25 +247,28 @@ int main() {
             }
 
 
-            // TODO: dropout
-
-
-            /* Shortcut connection: add the context vectors to the corresponding
-             * input vectors to preserve the quality of the gradient flow during
-             * the backward step
-             * NOTE 1: in models where the context vector size differs from the
-             *   input vector size, a projection of the inputs into the
-             *   context-vector-sized vector space is required. However, having
-             *   these two dimensions differ is not customary in the LLM
-             *   community.                                                     */
-            /* XXX: move this into the attention loop (m loop) above if dropout
-             *      is not implemented                                          */
-            for (auto m = decltype(nids_input){0}; m < nids_input; ++m) {
-                const auto idx_m = m*DIM;
-                for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-                    const auto mi = idx_m + i;
-                    inputs.at(mi) += contexts.at(mi);
+            /* ***** Dropout + Shortcut connection *****
+             * Dropout: randomly set some of the components of the context
+             *   vectors to zero to avoid having the model overly rely on a few
+             *   components during training. On the other hand, components which
+             *   are not set to zero must be rescaled so as to keep the
+             *   expectation value over the context vector constant.
+             * Shortcut connection: add the context vectors to the corresponding
+             *   input vectors to preserve the quality of the gradient flow
+             *   during the backward step
+             * NOTE: this could be moved to into the attention loop (m loop)
+             *       above, but the plain loop here is more straightforward     */
+            for (auto idx = decltype(dim_tot){0}; idx < dim_tot; ++idx) {
+                if constexpr (DROPOUT_PROB > 0.) {
+                    const auto x = udist(gen);
+                    if (x < DROPOUT_PROB) {
+                        contexts.at(idx) = 0.;
+                    } else {
+                        contexts.at(idx) *= 1./(1. - DROPOUT_PROB);
+                    }
                 }
+
+                inputs.at(idx) += contexts.at(idx);
             }
 
 
