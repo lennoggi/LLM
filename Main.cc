@@ -4,6 +4,7 @@
 #include <fstream>
 #include <sstream>
 #include <random>
+#include <algorithm>
 
 #include "Check_parameters.hh"
 #include "Types.hh"
@@ -357,14 +358,26 @@ int main() {
                 }
             }
 
-            softmax(last_logits);
+            // XXX XXX XXX XXX XXX XXX
+            // XXX XXX XXX XXX XXX XXX
+            // XXX XXX XXX XXX XXX XXX
+            /* XXX: softmax is not really needed now because it doesn't change
+             *      which logit is the largest (and so it doesn't change the
+             *      next predicted token). However, we'll later introduce some
+             *      variability, whereby the next predicted token is not
+             *      the one corresponding to the largest logit, and softmax will
+             *      be useful then.                                             */
+            //softmax(last_logits);
+            // XXX XXX XXX XXX XXX XXX
+            // XXX XXX XXX XXX XXX XXX
+            // XXX XXX XXX XXX XXX XXX
 
 
             // XXX
-            // Predict the next tokens
-            const auto &new_ids   = get_max_indices(last_logits, N_PREDICTED_TOKENS);
-            const auto new_tokens = tokenizer.decode(new_ids);
-            cout << input_text << endl << new_tokens << endl;
+            // Predict the next token
+            const auto new_id    = distance(last_logits.begin(), max_element(last_logits.begin(), last_logits.end()));
+            const auto new_token = tokenizer.decode(vector<size_t>{new_id});
+            cout << input_text << endl << new_token << endl;
             // XXX
 
 

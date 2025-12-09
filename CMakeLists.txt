@@ -10,7 +10,6 @@ set(EXE "llm")
 add_executable(${EXE}
     BPE_tokenizer.cc
     GELU_approx.cc
-    Get_max_indices.cc
     Layer_normalization.cc
     Main.cc
     Skip_connection_dropout.cc

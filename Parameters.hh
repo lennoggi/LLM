@@ -94,13 +94,6 @@ constexpr inline double DROPOUT_PROB = 0.1;
 #define FFN_EXPANSION_FACTOR 4
 
 
-/* -----------------------------------------------------
- * XXX: fix comment
- * Number of tokens to be predicted at each forward step 
- * ----------------------------------------------------- */
-#define N_PREDICTED_TOKENS 5
-
-
 /* -----------------------------------------------------------------------------
  * Context size, i.e., the number of token IDs used to predict the next token ID
  * during training
