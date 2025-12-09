@@ -43,7 +43,8 @@ int main() {
          * vocabulary with random numbers (to be optimized during training
          * later on)                                                            */
         const auto nids_vocab = tokenizer.vocab_token2id.size();
-        vector<double> vocab_embedding(nids_vocab*DIM);
+        const auto dim_vocab  = nids_vocab*DIM;
+        vector<double> vocab_embedding(dim_vocab);
 
         random_device rd;
         #if (RANDOM_SEED > 0)
@@ -136,14 +137,13 @@ int main() {
         /* Initialize the logits weights to the vocabulary embedding and the
          * biases to zero
          * NOTE: think of 'logits_W' as a (DIM, nids_vocab)-shaped matrix       */
-        const auto dim_logits_weights = DIM*nids_vocab;
-        vector<double> logits_W(dim_logits_weights);
+        vector<double> logits_W(dim_vocab);
         vector<double> logits_b(nids_vocab, 0.);
 
         for (auto v = decltype(nids_vocab){0}; v < nids_vocab; ++v) {
             const auto idx_v = v*DIM;
             for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-                logits_W.at(i*nids_input + v) = vocab_embedding.at(idx_v + i);
+                logits_W.at(i*nids_vocab + v) = vocab_embedding.at(idx_v + i);
             }
         }
 
@@ -360,13 +360,12 @@ int main() {
             softmax(last_logits);
 
 
-            // TODO: predict the next token (include max_new token and context size)
-
-// XXX
-//for (const auto &logit : last_logits) {
-//    cout << logit << " ";
-//}
-// XXX
+            // XXX
+            // Predict the next tokens
+            const auto &new_ids   = get_max_indices(last_logits, N_PREDICTED_TOKENS);
+            const auto new_tokens = tokenizer.decode(new_ids);
+            cout << input_text << endl << new_tokens << endl;
+            // XXX
 
 
 

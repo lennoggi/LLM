@@ -8,13 +8,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(EXE "llm")
 
 add_executable(${EXE}
-    Main.cc
-    Word_tokenizer.cc
     BPE_tokenizer.cc
-    Layer_normalization.cc
-    Softmax.cc
-    Skip_connection_dropout.cc
     GELU_approx.cc
+    Get_max_indices.cc
+    Layer_normalization.cc
+    Main.cc
+    Skip_connection_dropout.cc
+    Softmax.cc
+    Word_tokenizer.cc
 )
 
 target_include_directories(${EXE} PRIVATE ${CMAKE_SOURCE_DIR}/include)
