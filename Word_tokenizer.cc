@@ -60,11 +60,11 @@ word_tokenizer_t::word_tokenizer_t(const string &training_text) {
     (this->eot) = {"<|end-of-text|>", original_vocab_size + 1};
 
     if (not (this->vocab_token2id).emplace(this->unk).second) {
-        throw runtime_error("Insertion of 'unknown' token failed");
+        throw runtime_error("word_tokenizer_t(): insertion of 'unknown' token failed");
     }
 
     if (not (this->vocab_token2id).emplace(this->eot).second) {
-        throw runtime_error("Insertion of 'end-of-text' token failed");
+        throw runtime_error("word_tokenizer_t: insertion of 'end-of-text' token failed");
     }
 
 
@@ -75,7 +75,7 @@ word_tokenizer_t::word_tokenizer_t(const string &training_text) {
     for (const auto &[token, id] : (this->vocab_token2id)) {
         if (not (this->vocab_id2token).emplace(id, token).second) {
             ostringstream exception_ss;
-            exception_ss << "Unexpected repetition of element [" << id << ", " << token
+            exception_ss << "word_tokenizer_t(): unexpected repetition of element [" << id << ", " << token
                          << "] in the ID-to-token vocabulary. This may happen if ID " << id
                          << " is not unique in the token-to-ID vocabulary.";
             throw runtime_error(exception_ss.str());
@@ -143,7 +143,7 @@ string word_tokenizer_t::decode(const vector<size_t> &ids) {
             decoded_text_ss << (this->vocab_id2token).at(id) << " ";
         } catch (const exception &e) {
             ostringstream exception_ss;
-            exception_ss << "Unknown token ID " << id
+            exception_ss << "word_tokenizer_t::decode(): unknown token ID " << id
                          << ": this should never happen because the 'unknown' token should be part of the dictionary. Please check the code's correctness (exception: \""
                          << e.what() << "\")";
             throw runtime_error(exception_ss.str());

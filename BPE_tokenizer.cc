@@ -76,7 +76,7 @@ bpe_tokenizer_t::bpe_tokenizer_t(const string &training_text,
         for (const auto &token : word_strvec) {
             // Sanity check
             if (token == eow) {
-                throw runtime_error("Found end-of-word character token in the training text. This is not supported: please change the end-of-word character to something not present in the training text.");
+                throw runtime_error("bpe_tokenizer_t(): found end-of-word character token in the training text. This is not supported: please change the end-of-word character to something not present in the training text.");
             }
 
             /* Try inserting the token into the token-to-ID vocabulary (O(1) for
@@ -96,9 +96,9 @@ bpe_tokenizer_t::bpe_tokenizer_t(const string &training_text,
 
     if ((this->vocab_token2id).size() > max_vocab_size) {
         ostringstream error_ss;
-        error_ss << "Initial vocabulary size (" << (this->vocab_token2id).size()
+        error_ss << "bpe_tokenizer_t(): initial vocabulary size (" << (this->vocab_token2id).size()
                  << ") larger than maximum allowed vocabulary size (" << max_vocab_size
-                 << "). Please increase maximum allowed vocabulary size to at least "
+                 << "). Please increase the maximum allowed vocabulary size to at least "
                  << (this->vocab_token2id).size() << ".";
         throw runtime_error(error_ss.str());
     }
@@ -117,7 +117,7 @@ bpe_tokenizer_t::bpe_tokenizer_t(const string &training_text,
     const auto nwords = words_list.size();
 
     if (nwords < 1) {
-        throw runtime_error("Need at least one word in the text");
+        throw runtime_error("bpe_tokenizer_t(): need at least one word in the text");
     }
 
     while ((this->vocab_token2id).size() < max_vocab_size) {
@@ -135,7 +135,7 @@ bpe_tokenizer_t::bpe_tokenizer_t(const string &training_text,
                         symbolpairs_freq.at(symbol_pair) += 1;
                     } catch (const exception &e) {
                         ostringstream exception_ss;
-                        exception_ss << "Failed to access the symbol-pair->frequency map at key '" << symbol_pair <<
+                        exception_ss << "bpe_tokenizer_t(): failed to access the symbol-pair->frequency map at key '" << symbol_pair <<
                             "'. This key should exist, please check the code (exception: \"" << e.what() << "\").";
                         throw runtime_error(exception_ss.str());
                     }
@@ -153,7 +153,7 @@ bpe_tokenizer_t::bpe_tokenizer_t(const string &training_text,
         assert(most_common_symbolpair_freq > 0);
 
         if (most_common_symbolpair_freq == 1) {
-            cout << "********** WARNING **********" << endl
+            cerr << "********** WARNING **********" << endl
                  << "Merging symbols stopped at vocabulary size " << (this->vocab_token2id).size()
                  << " (maximum allowed vocabulary size: " << max_vocab_size
                  << ") because no other merges are possible" << endl
@@ -202,11 +202,11 @@ bpe_tokenizer_t::bpe_tokenizer_t(const string &training_text,
     (this->eot) = {"<|end-of-text|>", original_vocab_size + 1};
 
     if (not (this->vocab_token2id).emplace(this->unk).second) {
-        throw runtime_error("Insertion of 'unknown' token failed");
+        throw runtime_error("bpe_tokenizer_t(): insertion of 'unknown' token failed");
     }
 
     if (not (this->vocab_token2id).emplace(this->eot).second) {
-        throw runtime_error("Insertion of 'end-of-text' token failed");
+        throw runtime_error("bpe_tokenizer_t(): insertion of 'end-of-text' token failed");
     }
 
     /* Build the ID-to-token vocabulary for fast (O(1)) ID lookup in
@@ -216,7 +216,7 @@ bpe_tokenizer_t::bpe_tokenizer_t(const string &training_text,
     for (const auto &[token, id] : (this->vocab_token2id)) {
         if (not (this->vocab_id2token).emplace(id, token).second) {
             ostringstream exception_ss;
-            exception_ss << "Unexpected repetition of element [" << id << ", " << token
+            exception_ss << "bpe_tokenizer_t(): unexpected repetition of element [" << id << ", " << token
                          << "] in the ID-to-token vocabulary. This may happen if ID " << id
                          << " is not unique in the token-to-ID vocabulary.";
             throw runtime_error(exception_ss.str());
@@ -295,7 +295,7 @@ vector<size_t> bpe_tokenizer_t::encode(const string &text) {
     const auto nwords = words_list.size();
     
     if (nwords < 1) {
-        throw runtime_error("Need at least one word in the text");
+        throw runtime_error("bpe_tokenizer_t::encode(): need at least one word in the text");
     }
 
     for (auto &word_strvec : words_list) {
@@ -342,7 +342,7 @@ vector<size_t> bpe_tokenizer_t::encode(const string &text) {
         for (const auto &token : word_strvec) {
             // Sanity check
             if (token == (this->eow)) {
-                throw runtime_error("Found end-of-word character token in the input text. This is not supported: please change the end-of-word character to something not present in the training text.");
+                throw runtime_error("bpe_tokenizer_t::encode(): found end-of-word character token in the input text. This is not supported: please change the end-of-word character to something not present in the training text.");
             }
             ++ntokens;
         }
@@ -387,7 +387,7 @@ string bpe_tokenizer_t::decode(const vector<size_t> &ids) {
             decoded_text_ss << (this->vocab_id2token).at(id);
         } catch (const exception &e) {
             ostringstream exception_ss;
-            exception_ss << "Unknown token ID " << id
+            exception_ss << "bpe_tokenizer_t::decode(): unknown token ID " << id
                          << ": this should never happen because the 'unknown' token should be part of the dictionary. Please check the code's correctness (exception: \""
                          << e.what() << "\")";
             throw runtime_error(exception_ss.str());
