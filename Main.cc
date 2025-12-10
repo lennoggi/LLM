@@ -40,6 +40,11 @@ int main() {
         const auto &ids_input = tokenizer.encode(input_text);
         const auto nids_input = ids_input.size();
 
+        if (nids_input < 2) {
+            throw runtime_error("Need at least two input tokens for the cross-entropy loss calculation to be meaningful and successful");
+            return 1;  // Not reached
+        }
+
 
         /* Initialize a vector representation ("embedding") of each token in the
          * vocabulary with random numbers (to be optimized during training
@@ -123,7 +128,7 @@ int main() {
         constexpr auto dim_ffn_weights  = DIM*dim_ffn_expanded;
 
         vector<double> ffn_W1(dim_ffn_weights),      ffn_W2(dim_ffn_weights);
-        vector<double> ffn_b1(dim_ffn_expanded, 0.), ffn_b2(dim_ffn_expanded, 0.);
+        vector<double> ffn_b1(dim_ffn_expanded, 0.), ffn_b2(DIM, 0.);
 
         // Xavier/Glorot normal distribution
         constexpr auto xg_ffn_std = sqrt(6./(static_cast<double>(DIM) + static_cast<double>(dim_ffn_expanded)));
@@ -233,6 +238,7 @@ int main() {
              *   nds_input<->nheads to allow parallelization by head. Then the
              *   normalization factor will become 1/sqrt(DIM_OUT/nheads)        */
             constexpr auto sqrt_dim_inv = 1./sqrt_dim;
+            fill(contexts.begin(), contexts.end(), 0.);
 
             for (auto m = decltype(nids_input){0}; m < nids_input; ++m) {
                 const auto idx_m = m*DIM;
@@ -438,7 +444,7 @@ int main() {
                 loss += -(logits.at(idx_m_vocab + ids_input.at(m+1)) - logits_m_max) + log_sum_exp_m;
             }
 
-            loss /= static_cast<double>(nids_input);
+            loss /= static_cast<double>(nids_input-1);
 
             // XXX
             cout << "Loss = " << loss << ", ";
