@@ -5,6 +5,7 @@
 #include <sstream>
 #include <random>
 #include <algorithm>
+#include <limits>
 
 #include "Check_parameters.hh"
 #include "Types.hh"
@@ -64,8 +65,7 @@ int main() {
 
 
         // Initialize the positional embedding vectors with random numbers
-        const auto dim_tot        = nids_input*DIM;
-        const auto idx_last_input = dim_tot - DIM;  // = (nids_input-1)*DIM
+        const auto dim_tot = nids_input*DIM;
         vector<double> pos_embeddings(dim_tot);
 
         for (auto &el : pos_embeddings) {
@@ -150,8 +150,8 @@ int main() {
 
 
         /* Preallocate the input and context vectors, the query, key, and value
-         * matrices, and the FFN hidden iand output layers, and the last logits
-         * vector to improve performance                                        */
+         * matrices, and the FFN hidden and output layers, and the logits
+         * vectors to improve performance                                       */
         vector<double> inputs(dim_tot), contexts(dim_tot);
         vector<double> queries(dim_tot), keys(dim_tot), values(dim_tot);
 
@@ -159,7 +159,7 @@ int main() {
         vector<double> ffn_h(dim_tot_expanded);
         vector<double> ffn_out(dim_tot);
 
-        vector<double> last_logits(nids_vocab);
+        vector<double> logits(nids_input*nids_vocab);
 
 
 
@@ -344,17 +344,22 @@ int main() {
             layer_norm(inputs, scale_final, shift_final);
 
 
-            // Build the logits vector corresponding to the last input token/row
-            for (auto v = decltype(nids_vocab){0}; v < nids_vocab; ++v) {
-                last_logits.at(v) = logits_b.at(v);
-            }
-
-            for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-                const auto idx_i       = i*nids_vocab;
-                const auto inputs_last = inputs.at(idx_last_input + i);
+            // Build the logits vector for each input token
+            for (auto m = decltype(nids_input){0}; m < nids_input; ++m) {
+                const auto idx_m       = m*DIM;
+                const auto idx_m_vocab = m*nids_vocab;
 
                 for (auto v = decltype(nids_vocab){0}; v < nids_vocab; ++v) {
-                    last_logits.at(v) += inputs_last*logits_W.at(idx_i + v);
+                    logits.at(idx_m_vocab + v) = logits_b.at(v);
+                }
+
+                for (auto i = decltype(DIM){0}; i < DIM; ++i) {
+                    const auto idx_i_vocab = i*nids_vocab;
+                    const auto inputs_mi   = inputs.at(idx_m + i);
+
+                    for (auto v = decltype(nids_vocab){0}; v < nids_vocab; ++v) {
+                        logits.at(idx_m_vocab + v) += inputs_mi*logits_W.at(idx_i_vocab + v);
+                    }
                 }
             }
 
@@ -367,7 +372,7 @@ int main() {
              *      variability, whereby the next predicted token is not
              *      the one corresponding to the largest logit, and softmax will
              *      be useful then.                                             */
-            //softmax(last_logits);
+            //softmax(last_logits);  // XXX: last_logits_defined below
             // XXX XXX XXX XXX XXX XXX
             // XXX XXX XXX XXX XXX XXX
             // XXX XXX XXX XXX XXX XXX
@@ -375,9 +380,14 @@ int main() {
 
             // XXX
             // Predict the next token
-            const auto new_id    = distance(last_logits.begin(), max_element(last_logits.begin(), last_logits.end()));
-            const auto new_token = tokenizer.decode(vector<size_t>{new_id});
-            cout << input_text << endl << new_token << endl;
+            //const auto last_token_idx = nids_input*nids_vocab - nids_vocab;  // (nids_input-1)*nids_vocab
+            //vector<double> last_logits(nids_vocab);
+            //for (auto v = decltype(nids_vocab){0}; v < nids_vocab; ++v) {
+            //    last_logits.at(v) = logits.at(last_token_idx + v);
+            //}
+            //const auto new_id    = distance(last_logits.begin(), max_element(last_logits.begin(), last_logits.end()));
+            //const auto new_token = tokenizer.decode(vector<size_t>{new_id});
+            //cout << input_text << endl << new_token << endl;
             // XXX
 
 
@@ -385,6 +395,54 @@ int main() {
             /* -------------------
              * TODO: backward pass
              * ------------------- */
+            /* Compute the cross-entropy loss between the input and the target
+             * tokens, where the "target" token of each input token is just the
+             * next input token                                                 */
+            double loss = 0.;
+
+            for (auto m = decltype(nids_input){0}; m < nids_input - 1; ++m) {
+                const auto idx_m_vocab =  m*nids_vocab;
+
+                // Find the largest logit for the current input token
+                double logits_m_max = -numeric_limits<double>::infinity();
+
+                for (auto v = decltype(nids_vocab){0}; v < nids_vocab; ++v) {
+                    const auto logits_mv = logits.at(idx_m_vocab + v);
+                    if (logits_mv > logits_m_max) {
+                        logits_m_max = logits_mv;
+                    }
+                }
+
+                /* Build the log of the sum of the stabilized exponentials of
+                 * all the logits for the current input token                   */
+                double log_sum_exp_m = 0.;
+
+                for (auto v = decltype(nids_vocab){0}; v < nids_vocab; ++v) {
+                    log_sum_exp_m += exp(logits.at(idx_m_vocab + v) - logits_m_max);
+                }
+
+                log_sum_exp_m = log(log_sum_exp_m);
+
+                /* Add the loss term for the current input token
+                 * NOTE: letting
+                 *   z[m][v+1] = logits.at(idx_m_vocab + ids_input.at(m+1))
+                 *   be the logit corresponding to the next input token, the
+                 *   expression below is equivalent to
+                 *
+                 *       -log(exp(z[m][v+1] - logits_m_max)) + log_sum_exp_m  =
+                 *   = -( log(exp(z[m][v+1] - logits_m_max)) - log_sum_exp_m) =
+                 *   = -log( (exp(z[m][v+1] - logits_m_max)) / sum_exp_m) ,
+                 *
+                 *  which implicitly applies softmax normalization to each logit
+                 *  to convert it into a probability                            */
+                loss += -(logits.at(idx_m_vocab + ids_input.at(m+1)) - logits_m_max) + log_sum_exp_m;
+            }
+
+            // XXX
+            cout << "Loss = " << loss << ", ";
+            // XXX
+
+            // TODO: complete backward step
 
             cout << "Training epoch " << it << " completed" << endl;
         }
