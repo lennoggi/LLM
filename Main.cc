@@ -438,6 +438,8 @@ int main() {
                 loss += -(logits.at(idx_m_vocab + ids_input.at(m+1)) - logits_m_max) + log_sum_exp_m;
             }
 
+            loss /= static_cast<double>(nids_input);
+
             // XXX
             cout << "Loss = " << loss << ", ";
             // XXX
