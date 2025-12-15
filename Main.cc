@@ -155,8 +155,9 @@ int main() {
 
 
         /* Preallocate the input and context vectors, the query, key, and value
-         * matrices, and the FFN hidden and output layers, and the logits
-         * vectors to improve performance                                       */
+         * matrices, and the FFN hidden and output layers, the logits vectors,
+         * the loss' gradients wrt to the logits weights and biases, and some
+         * helpers to improve performance                                       */
         vector<double> inputs(dim_tot), contexts(dim_tot);
         vector<double> queries(dim_tot), keys(dim_tot), values(dim_tot);
 
@@ -165,6 +166,9 @@ int main() {
         vector<double> ffn_out(dim_tot);
 
         vector<double> logits(nids_input*nids_vocab);
+        vector<double> probs_m(nids_vocab);
+        vector<double> d_logits_W(dim_vocab);  // Matrix (DIM, nids_vocab)
+        vector<double> d_logits_b(nids_vocab);
 
 
 
@@ -403,10 +407,14 @@ int main() {
              * ------------------- */
             /* Compute the cross-entropy loss between the input and the target
              * tokens, where the "target" token of each input token is just the
-             * next input token                                                 */
+             * next input token. Meanwhile, accumulate the terms needed to later
+             * calculate the gradients of the loss wrt the logits' weights and
+             * biases.                                                          */
             double loss = 0.;
+            fill(d_logits_b.begin(), d_logits_b.end(), 0.);
+            fill(d_logits_W.begin(), d_logits_W.end(), 0.);
 
-            for (auto m = decltype(nids_input){0}; m < nids_input - 1; ++m) {
+	    for (auto m = decltype(nids_input){0}; m < nids_input - 1; ++m) {
                 const auto idx_m_vocab =  m*nids_vocab;
 
                 // Find the largest logit for the current input token
@@ -421,13 +429,16 @@ int main() {
 
                 /* Build the log of the sum of the stabilized exponentials of
                  * all the logits for the current input token                   */
-                double log_sum_exp_m = 0.;
+                double sum_exp_m = 0.;
 
                 for (auto v = decltype(nids_vocab){0}; v < nids_vocab; ++v) {
-                    log_sum_exp_m += exp(logits.at(idx_m_vocab + v) - logits_m_max);
+                    const auto exp_term = exp(logits.at(idx_m_vocab + v) - logits_m_max);
+                    probs_m.at(v) = exp_term;  // NOTE: not yet normalized by sum_exp_m
+                    sum_exp_m    += exp_term;
                 }
 
-                log_sum_exp_m = log(log_sum_exp_m);
+                assert(sum_exp_m > 0.);
+                const auto log_sum_exp_m = log(sum_exp_m);
 
                 /* Add the loss term for the current input token
                  * NOTE: letting
@@ -441,18 +452,51 @@ int main() {
                  *
                  *  which implicitly applies softmax normalization to each logit
                  *  to convert it into a probability                            */
-                loss += -(logits.at(idx_m_vocab + ids_input.at(m+1)) - logits_m_max) + log_sum_exp_m;
+                const auto next_input_id = ids_input.at(m+1);
+                loss += -(logits.at(idx_m_vocab + next_input_id) - logits_m_max) + log_sum_exp_m;
+
+
+                /* Normalize the softmax probabilities for each logit in the
+                 * logits vector for the current input token (i.e., for the
+                 * current m index) and accumulate the loss' gradients wrt the
+                 * logits' weights and biases                                   */
+                const auto idx_m = m*DIM;
+
+                for (auto v = decltype(nids_vocab){0}; v < nids_vocab; ++v) {
+                    auto probs_mv = probs_m.at(v);
+                    probs_mv     /= sum_exp_m;
+
+                    if (v == next_input_id) {
+                        probs_mv -= 1.;
+                    }
+
+                    d_logits_b.at(v) += probs_mv;
+
+                    for (auto i = decltype(DIM){0}; i < DIM; ++i) {
+                        const auto idx_i_vocab = i*nids_vocab;
+                        d_logits_W.at(i*nids_vocab + v) += probs_mv*inputs.at(idx_m + i);
+                    }
+                }
             }
 
-            loss /= static_cast<double>(nids_input-1);
 
-            // XXX
-            cout << "Loss = " << loss << ", ";
-            // XXX
+            // Compute average loss and update the logits weights and biases
+            auto norm_fac = 1./static_cast<double>(nids_input-1);
+            loss         *= norm_fac;
+            norm_fac     *= LEARNING_RATE;
 
-            // TODO: complete backward step
+            for (auto v = decltype(nids_vocab){0}; v < nids_vocab; ++v) {
+                logits_b.at(v) -= norm_fac*d_logits_b.at(v);
+            }
 
-            cout << "Training epoch " << it << " completed" << endl;
+            for (auto idx = decltype(dim_vocab){0}; idx < dim_vocab; ++idx) {
+                logits_W.at(idx) -= norm_fac*d_logits_W.at(idx);
+            }
+
+
+            // TODO: update all the other weights in the model
+
+            cout << "Training epoch " << it << " completed, average loss: " << loss << endl;
         }
 
 

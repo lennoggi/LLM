@@ -66,8 +66,8 @@
 /* ----------------------------------------
  * Number of training iterations ("epochs")
  * ---------------------------------------- */
-//#define NTRAIN 10000
-#define NTRAIN 1
+#define NTRAIN 10000
+//#define NTRAIN 1
 
 
 /* --------------------------------------------------------------------------
@@ -92,6 +92,12 @@ constexpr inline double DROPOUT_PROB = 0.1;
  * activation function used after the attention layer
  * ------------------------------------------------------------------------ */
 #define FFN_EXPANSION_FACTOR 4
+
+
+/* -------------------------------------------------------------
+ * Learning rate regulating the strength of the gradient descent
+ * ------------------------------------------------------------- */
+#define LEARNING_RATE 1.
 
 
 /* -----------------------------------------------------------------------------
