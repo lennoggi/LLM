@@ -9,10 +9,11 @@ static_assert(BPE_MAX_VOCAB_SIZE > 0);
 static_assert(NTRAIN > 0);
 
 static_assert(DIM > 1);  // At least 2 for the variance of each token embedding vector to be well defined
-static_assert(VAR_TINY > 0. and VAR_TINY < 1.);  // Should be positive, but "small"
-static_assert(DROPOUT_PROB <= 1.);               // Negative means dropout is disabled
+static_assert(VAR_TINY > 0. and VAR_TINY < 1.);    // Should be positive, but "small"
+static_assert(DROPOUT_PROB <= 1.);                 // Negative means dropout is disabled
 static_assert(FFN_EXPANSION_FACTOR > 0);
 static_assert(LEARNING_RATE > 0.);
+static_assert(TOLERANCE > 0. and TOLERANCE < 1.);  // Should be positive, but "small"
 
 //static_assert(CONTEXT_SIZE > 0);
 static_assert(VERBOSE or not VERBOSE);

@@ -16,7 +16,8 @@ using namespace std;
  * ========================================================================= */
 void layer_norm(      vector<double> &vecs,
                 const vector<double> &scale,
-                const vector<double> &shift) {
+                const vector<double> &shift,
+                      vector<double> *sigmas_inv) {
     /* Specifying 'long int' explicitly here so that the compiler knows it has
      * to pick std::div(long int a, long int b) (std::div_t is overloaded)      */
     const long int ntot     = vecs.size();
@@ -39,7 +40,7 @@ void layer_norm(      vector<double> &vecs,
         double mean      = 0.; 
         double sum_diffs = 0.; 
 
-        /* Welford's algorithm to compute the mean amd variance of a
+        /* Welford's algorithm to compute the mean and variance of a
          * sample in one pass and without a potential catastrophic
          * cancellation when computing the variance                     */
         for (auto i = decltype(vec_size){0}; i < vec_size; ++i) {
@@ -55,13 +56,19 @@ void layer_norm(      vector<double> &vecs,
         /* NOTE: sum_diffs==0 can only happen if all elements in
          *       vecs.at(mi) are the same, which is very unlikely     */
         assert(sum_diffs >= 0.);
-        constexpr auto sqrt_var_inv_fallback = 1./sqrt(static_cast<double>(VAR_TINY));
-        const     auto sqrt_var_inv          = (sum_diffs == 0.) ? sqrt_var_inv_fallback : sqrt(static_cast<double>(vec_size-1)/sum_diffs);
-        assert(sqrt_var_inv > 0.);
+        constexpr auto sigma_inv_fallback = 1./sqrt(static_cast<double>(VAR_TINY));
+        const     auto sigma_inv          = (sum_diffs == 0.) ? sigma_inv_fallback : sqrt(static_cast<double>(vec_size-1)/sum_diffs);
+        assert(sigma_inv > 0.);
 
         for (auto i = decltype(vec_size){0}; i < vec_size; ++i) {
             const auto mi = idx_m + i;
-            vecs.at(mi) = scale.at(i)*(sqrt_var_inv*(vecs.at(mi) - mean)) + shift.at(i);
+            vecs.at(mi) = scale.at(i)*(sigma_inv*(vecs.at(mi) - mean)) + shift.at(i);
+        }
+
+
+        // Optionally output sqrt(variance)
+        if (sigmas_inv != nullptr) {
+            sigmas_inv->at(m) = sigma_inv;
         }
     }
 
