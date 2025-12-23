@@ -296,6 +296,7 @@ vector<size_t> bpe_tokenizer_t::encode(const string &text) {
     
     if (nwords < 1) {
         throw runtime_error("bpe_tokenizer_t::encode(): need at least one word in the text");
+        return vector<size_t>();  // Not reached
     }
 
     for (auto &word_strvec : words_list) {
@@ -343,6 +344,7 @@ vector<size_t> bpe_tokenizer_t::encode(const string &text) {
             // Sanity check
             if (token == (this->eow)) {
                 throw runtime_error("bpe_tokenizer_t::encode(): found end-of-word character token in the input text. This is not supported: please change the end-of-word character to something not present in the training text.");
+                return vector<size_t>();  // Not reached
             }
             ++ntokens;
         }
@@ -391,6 +393,7 @@ string bpe_tokenizer_t::decode(const vector<size_t> &ids) {
                          << ": this should never happen because the 'unknown' token should be part of the dictionary. Please check the code's correctness (exception: \""
                          << e.what() << "\")";
             throw runtime_error(exception_ss.str());
+            return string();  // Not reached
         }
     }
 

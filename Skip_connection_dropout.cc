@@ -20,6 +20,7 @@ void skip_conn_dropout(vector<double> &vec,
 
     if (dropout_vec.size() != dim) {
         throw runtime_error("skip_conn_dropout(): the sizes of the two vectors must match");
+        return;  // Not reached
     }
 
     constexpr auto dropout_scale = 1./(1. - DROPOUT_PROB);

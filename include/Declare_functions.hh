@@ -5,7 +5,8 @@
 #include <random>
 
 
-void GELU_approx(std::vector<double> &vec);
+void GELU_approx(std::vector<double> &vec,
+                 std::vector<double> &vec_prime);
 
 void layer_norm(      std::vector<double> &vecs,
                 const std::vector<double> &scale,

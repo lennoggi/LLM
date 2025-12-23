@@ -162,13 +162,13 @@ int main() {
 
     /* Preallocate the input and context vectors, the query, key, and value
      * matrices, and the FFN hidden and output layers, the logits vectors, the
-     * loss' gradients wrt to the logits weights and biases, and some helpers to
+     * loss' gradients wrt to the model's parameters, and some helpers to
      * improve performance                                                      */
-    vector<double> inputs(dim_tot), contexts(dim_tot);
+    vector<double> inputs(dim_tot), inputs_preFFN(dim_tot), contexts(dim_tot);
     vector<double> queries(dim_tot), keys(dim_tot), values(dim_tot);
 
     const auto dim_tot_expanded = nids_input*dim_ffn_expanded;
-    vector<double> ffn_h(dim_tot_expanded);
+    vector<double> ffn_h(dim_tot_expanded), ffn_h_prime(dim_tot_expanded);
     vector<double> ffn_out(dim_tot);
 
     vector<double> logits(nids_input*nids_vocab);
@@ -176,15 +176,21 @@ int main() {
     vector<double> probs_m(nids_vocab);
     vector<double> inputs_preLN_normalized_m(DIM);
     vector<double> sigmas_inv_preLN(nids_input);
-    vector<double> dinputs_scalefinal_m(DIM);
-
-    vector<double> d_logits_W(dim_vocab);  // Matrix (DIM, nids_vocab)
-    vector<double> d_logits_b(nids_vocab);
-
     vector<double> d_inputs_m(DIM);
+    vector<double> dinputs_scalefinal_m(DIM);
+    vector<double> d_ffn_b2_m(DIM);
+
+    vector<double> d_ffn_b1(dim_ffn_expanded);
+    vector<double> d_ffn_W1(dim_ffn_weights);  // Matrix (DIM, dim_ffn_expanded)
 
     vector<double> d_ffn_b2(DIM);
     vector<double> d_ffn_W2(dim_ffn_weights);  // Matrix (dim_ffn_expanded, DIM)
+
+    vector<double> d_scale_final(DIM);
+    vector<double> d_shift_final(DIM);
+
+    vector<double> d_logits_W(dim_vocab);  // Matrix (DIM, nids_vocab)
+    vector<double> d_logits_b(nids_vocab);
 
 
     /* Write the loss function to file at every training iteration for logging
@@ -327,8 +333,10 @@ int main() {
          *    the backward step                                                 */
         skip_conn_dropout(inputs, contexts, udist, gen);
 
-        // Another layer normalization
+        /* Another layer normalization
+         * NOTE: save inputs at this stage for the backward pass                */
         layer_norm(inputs, scale_ffn, shift_ffn);
+        inputs_preFFN = inputs;
 
 
         /* Expanding-contracting two-layer feed-forward neural network:
@@ -351,8 +359,9 @@ int main() {
             }
         }
 
-        // Not quite GELU, just an approximation
-        GELU_approx(ffn_h);
+        /* Not quite GELU, just an approximation
+         * NOTE: derivative of pre-GELU inputs needed for the backward pass     */
+        GELU_approx(ffn_h, ffn_h_prime);
 
         for (auto m = decltype(nids_input){0}; m < nids_input; ++m) {
             const auto idx_m     = m*DIM;
@@ -430,11 +439,17 @@ int main() {
          * biases.                                                              */
         double loss = 0.;
 
-        fill(d_logits_b.begin(), d_logits_b.end(), 0.);
-        fill(d_logits_W.begin(), d_logits_W.end(), 0.);
+        fill(d_ffn_b1.begin(), d_ffn_b1.end(), 0.);
+        fill(d_ffn_W1.begin(), d_ffn_W1.end(), 0.);
 
         fill(d_ffn_b2.begin(), d_ffn_b2.end(), 0.);
         fill(d_ffn_W2.begin(), d_ffn_W2.end(), 0.);
+
+        fill(d_scale_final.begin(), d_scale_final.end(), 0.);
+        fill(d_shift_final.begin(), d_shift_final.end(), 0.);
+
+        fill(d_logits_b.begin(), d_logits_b.end(), 0.);
+        fill(d_logits_W.begin(), d_logits_W.end(), 0.);
 
 
         for (auto m = decltype(nids_input){0}; m < nids_input - 1; ++m) {
@@ -507,40 +522,61 @@ int main() {
 
             /* Recover the pre-final-layer-norm input vector (shifted by its
              * mean and scaled by its standard deviation) for the current input
-             * token
+             * token. Meanwhile, accumulate the loss' gradient wrt the post-FFN
+             * scale and shift.
              * NOTE: stabilize if scale_final is too small                      */
             auto dinputs_scalefinal_m_sum             = 0.;
             auto dinputs_scalefinal_inputspreLN_m_sum = 0.;
 
             for (auto i = decltype(DIM){0}; i < DIM; ++i) {
+                const auto d_inputs_mi   = d_inputs_m.at(i);
                 const auto scale_final_i = scale_final.at(i);
 
-                const auto input_preLN_normalized_mi = (scale_final_i > TOLERANCE)      ?
-                    (inputs.at(idx_m + i) - shift_final.at(i))/scale_final_i :
+                const auto input_preLN_normalized_mi = (scale_final_i > TOLERANCE) ?
+                    (inputs.at(idx_m + i) - shift_final.at(i))/scale_final_i       :
                     0.;
                 inputs_preLN_normalized_m.at(i) = input_preLN_normalized_mi;
 
-                const auto dinputs_scalefinal_mi      = d_inputs_m.at(i)*scale_final_i;
+                d_shift_final.at(i) += d_inputs_mi;
+                d_scale_final.at(i) += d_inputs_mi*input_preLN_normalized_mi;
+
+                const auto dinputs_scalefinal_mi      = d_inputs_mi*scale_final_i;
                 dinputs_scalefinal_m.at(i)            = dinputs_scalefinal_mi;
                 dinputs_scalefinal_m_sum             += dinputs_scalefinal_mi;
                 dinputs_scalefinal_inputspreLN_m_sum += dinputs_scalefinal_mi*input_preLN_normalized_mi;
             }
 
 
-            /* Build the loss gradients wrt to the outermost FFN weights and
-             * biases                                                           */
+            // Build the loss gradients wrt to the FFN weights and biases
             const auto sigma_inv_preLN_m = sigmas_inv_preLN.at(m);
 
             for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-                const auto idx_i_exp  = i*dim_ffn_expanded;
-                const auto d_ffn_b2_i = (dinputs_scalefinal_m.at(i)
-                                         - (dinputs_scalefinal_m_sum + dinputs_scalefinal_inputspreLN_m_sum*inputs_preLN_normalized_m.at(i))/static_cast<double>(DIM)
-                                        )*sigma_inv_preLN_m;
+                const auto idx_i_exp   = i*dim_ffn_expanded;
+                const auto d_ffn_b2_mi = (dinputs_scalefinal_m.at(i)
+                    - (dinputs_scalefinal_m_sum + dinputs_scalefinal_inputspreLN_m_sum*inputs_preLN_normalized_m.at(i))/static_cast<double>(DIM)
+                    )*sigma_inv_preLN_m;
 
-                d_ffn_b2.at(i) += d_ffn_b2_i;
+                d_ffn_b2_m.at(i) = d_ffn_b2_mi;
+                d_ffn_b2.at(i)  += d_ffn_b2_mi;
 
                 for (auto r = decltype(dim_ffn_expanded){0}; r < dim_ffn_expanded; ++r) {
-                    d_ffn_W2.at(r*DIM + i) += d_ffn_b2_i*ffn_h.at(idx_m_exp + r);
+                    d_ffn_W2.at(r*DIM + i) += d_ffn_b2_mi*ffn_h.at(idx_m_exp + r);
+                }
+            }
+
+
+            for (auto r = decltype(dim_ffn_expanded){0}; r < dim_ffn_expanded; ++r) {
+                const auto idx_r  = r*DIM;
+                double d_ffn_b1_r = 0.;
+
+                for (auto j = decltype(DIM){0}; j < DIM; ++j) {
+                    d_ffn_b1_r += d_ffn_b2_m.at(j)*ffn_W2.at(idx_r + j)*ffn_h_prime.at(idx_m_exp + r);
+                }
+
+                d_ffn_b1.at(r) += d_ffn_b1_r;
+
+                for (auto i = decltype(DIM){0}; i < DIM; ++i) {
+                    d_ffn_W1.at(i*dim_ffn_expanded + r) += d_ffn_b1_r*inputs_preFFN.at(idx_m + i);
                 }
             }
         }
@@ -548,10 +584,25 @@ int main() {
 
         // Compute average loss and update the model's parameters
         auto norm_fac = 1./static_cast<double>(nids_input-1);
-        loss         *= norm_fac;
-        norm_fac     *= LEARNING_RATE;
+        loss     *= norm_fac;
+        norm_fac *= LEARNING_RATE;
 
         loss_file << it << "\t" << loss << endl;
+
+        for (auto r = decltype(dim_ffn_expanded){0}; r < dim_ffn_expanded; ++r) {
+            ffn_b1.at(r) -= norm_fac*d_ffn_b1.at(r);
+        }
+
+        for (auto i = decltype(DIM){0}; i < DIM; ++i) {
+            ffn_b2.at(i)      -= norm_fac*d_ffn_b2.at(i);
+            scale_final.at(i) -= norm_fac*d_scale_final.at(i);
+            shift_final.at(i) -= norm_fac*d_shift_final.at(i);
+        }
+
+        for (auto idx = decltype(dim_ffn_weights){0}; idx < dim_ffn_weights; ++idx) {
+            ffn_W1.at(idx) -= norm_fac*d_ffn_W1.at(idx);
+            ffn_W2.at(idx) -= norm_fac*d_ffn_W2.at(idx);
+        }
 
         for (auto v = decltype(nids_vocab){0}; v < nids_vocab; ++v) {
             logits_b.at(v) -= norm_fac*d_logits_b.at(v);
@@ -559,14 +610,6 @@ int main() {
 
         for (auto idx = decltype(dim_vocab){0}; idx < dim_vocab; ++idx) {
             logits_W.at(idx) -= norm_fac*d_logits_W.at(idx);
-        }
-
-        for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-            ffn_b2.at(i) -= norm_fac*d_ffn_b2.at(i);
-        }
-
-        for (auto idx = decltype(dim_ffn_weights){0}; idx < dim_ffn_weights; ++idx) {
-            ffn_W2.at(idx) -= norm_fac*d_ffn_W2.at(idx);
         }
 
         // TODO: update all the other weights in the model

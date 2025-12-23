@@ -25,6 +25,7 @@ void layer_norm(      vector<double> &vecs,
 
     if (shift.size() != vec_size) {
         throw runtime_error("layer_normalization(): shift.size() must equal scale.size(), which in turn must equal the size of each of the input vectors");
+        return;  // Not reached
     }
 
     const auto nvecs_rem = std::div(ntot, vec_size);
@@ -32,6 +33,7 @@ void layer_norm(      vector<double> &vecs,
 
     if (nvecs_rem.rem != 0) {
         throw runtime_error("layer_normalization(): inconsistent vector size leads to non-integer number of input vectors");
+        return;  // Not reached
     }
 
 

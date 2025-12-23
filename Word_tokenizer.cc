@@ -64,7 +64,7 @@ word_tokenizer_t::word_tokenizer_t(const string &training_text) {
     }
 
     if (not (this->vocab_token2id).emplace(this->eot).second) {
-        throw runtime_error("word_tokenizer_t: insertion of 'end-of-text' token failed");
+        throw runtime_error("word_tokenizer_t(): insertion of 'end-of-text' token failed");
     }
 
 
@@ -147,6 +147,7 @@ string word_tokenizer_t::decode(const vector<size_t> &ids) {
                          << ": this should never happen because the 'unknown' token should be part of the dictionary. Please check the code's correctness (exception: \""
                          << e.what() << "\")";
             throw runtime_error(exception_ss.str());
+            return string();  // Not reached
         }
     }
 
