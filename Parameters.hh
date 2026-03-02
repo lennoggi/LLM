@@ -85,7 +85,8 @@
  * NOTE: set to a negative value to disable dropout entirely
  * ---------------------------------------------------------------------------- */
 //constexpr inline double DROPOUT_PROB = -1.;
-constexpr inline double DROPOUT_PROB = 0.1;
+//constexpr inline double DROPOUT_PROB = 0.1;
+constexpr inline double DROPOUT_PROB = 0.;
 
 
 /* ------------------------------------------------------------------------

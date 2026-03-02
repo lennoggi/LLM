@@ -189,6 +189,9 @@ int main() {
     vector<double> d_scale_final(DIM);
     vector<double> d_shift_final(DIM);
 
+    vector<double> d_scale_ffn(DIM);
+    vector<double> d_shift_ffn(DIM);
+
     vector<double> d_logits_W(dim_vocab);  // Matrix (DIM, nids_vocab)
     vector<double> d_logits_b(nids_vocab);
 
@@ -429,9 +432,9 @@ int main() {
 
 
 
-        /* -------------------
-         * TODO: backward pass
-         * ------------------- */
+        /* -------------
+         * Backward pass
+         * ------------- */
         /* Compute the cross-entropy loss between the input and the target
          * tokens, where the "target" token of each input token is just the next
          * input token. Meanwhile, accumulate the terms needed to later
@@ -447,6 +450,9 @@ int main() {
 
         fill(d_scale_final.begin(), d_scale_final.end(), 0.);
         fill(d_shift_final.begin(), d_shift_final.end(), 0.);
+
+        fill(d_scale_ffn.begin(), d_scale_ffn.end(), 0.);
+        fill(d_shift_ffn.begin(), d_shift_ffn.end(), 0.);
 
         fill(d_logits_b.begin(), d_logits_b.end(), 0.);
         fill(d_logits_W.begin(), d_logits_W.end(), 0.);
@@ -547,11 +553,13 @@ int main() {
             }
 
 
-            // Build the loss gradients wrt to the FFN weights and biases
+            /* Build the loss gradients wrt to the FFN weights and biases and
+             * the pre-FFN layer normalization scale and shift                  */
             const auto sigma_inv_preLN_m = sigmas_inv_preLN.at(m);
 
             for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-                const auto idx_i_exp   = i*dim_ffn_expanded;
+                const auto idx_i_exp = i*dim_ffn_expanded;
+
                 const auto d_ffn_b2_mi = (dinputs_scalefinal_m.at(i)
                     - (dinputs_scalefinal_m_sum + dinputs_scalefinal_inputspreLN_m_sum*inputs_preLN_normalized_m.at(i))/static_cast<double>(DIM)
                     )*sigma_inv_preLN_m;
@@ -562,8 +570,15 @@ int main() {
                 for (auto r = decltype(dim_ffn_expanded){0}; r < dim_ffn_expanded; ++r) {
                     d_ffn_W2.at(r*DIM + i) += d_ffn_b2_mi*ffn_h.at(idx_m_exp + r);
                 }
-            }
 
+                const auto scale_ffn_i = scale_ffn.at(i);
+                const auto inputs_preFFN_normalized_mi = (scale_ffn_i > TOLERANCE) ?
+                    (inputs_preFFN.at(idx_m + i) - shift_ffn.at(i))/scale_ffn_i    :
+                    0.;
+
+                d_shift_ffn.at(i) += d_ffn_b2_mi;
+                d_scale_ffn.at(i) += d_ffn_b2_mi*inputs_preFFN_normalized_mi;
+            }
 
             for (auto r = decltype(dim_ffn_expanded){0}; r < dim_ffn_expanded; ++r) {
                 const auto idx_r  = r*DIM;
@@ -597,6 +612,8 @@ int main() {
             ffn_b2.at(i)      -= norm_fac*d_ffn_b2.at(i);
             scale_final.at(i) -= norm_fac*d_scale_final.at(i);
             shift_final.at(i) -= norm_fac*d_shift_final.at(i);
+            scale_ffn.at(i)   -= norm_fac*d_scale_ffn.at(i);
+            shift_ffn.at(i)   -= norm_fac*d_shift_ffn.at(i);
         }
 
         for (auto idx = decltype(dim_ffn_weights){0}; idx < dim_ffn_weights; ++idx) {
@@ -630,6 +647,9 @@ int main() {
         //cout << input_text << " " << new_token << endl;
         // XXX
     }
+
+
+    cout << "INFO: all done" << endl;
 
 
 
