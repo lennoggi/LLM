@@ -1,7 +1,6 @@
 #!/bin/bash
 
-set -e
-set -x
+set -euox pipefail
 
 rm -rf build
 rm -rf install
