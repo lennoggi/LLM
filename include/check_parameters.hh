@@ -1,7 +1,7 @@
 #ifndef CHECK_PARAMETERS_HH
 #define CHECK_PARAMETERS_HH
 
-#include "../Parameters.hh"
+#include "../parameters.hh"
 
 static_assert(TOKENIZER == WORD or TOKENIZER == BPE);
 static_assert(BPE_MAX_VOCAB_SIZE > 0);

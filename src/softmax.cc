@@ -3,7 +3,7 @@
 #include <vector>
 #include <limits>
 
-#include "include/Declare_functions.hh"
+#include "declare_functions.hh"
 
 using namespace std;
 

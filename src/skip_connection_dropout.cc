@@ -2,8 +2,8 @@
 #include <random>
 #include <stdexcept>
 
-#include "include/Declare_functions.hh"
-#include "Parameters.hh"
+#include "declare_functions.hh"
+#include "parameters.hh"
 
 using namespace std;
 

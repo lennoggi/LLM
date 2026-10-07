@@ -6,8 +6,8 @@
 #include <regex>
 #include <algorithm>
 
-#include "Types.hh"
-#include "Parameters.hh"
+#include "types.hh"
+#include "parameters.hh"
 
 using namespace std;
 

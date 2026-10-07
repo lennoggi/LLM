@@ -8,11 +8,11 @@
 #include <limits>
 #include <stdexcept>
 
-#include "Check_parameters.hh"
-#include "Types.hh"
-#include "include/Declare_functions.hh"
+#include "check_parameters.hh"
+#include "types.hh"
+#include "declare_functions.hh"
 
-#include "Parameters.hh"
+#include "parameters.hh"
 
 using namespace std;
 
