@@ -5,7 +5,7 @@
 /* ----------------------------------------------
  * File containing the text used to train the LLM
  * ---------------------------------------------- */
-#define INFILE_TRAINING  "input_files/TheVerdict.txt"
+#define INFILE_TRAINING  "training_files/TheVerdict.txt"
 
 
 /* --------------------
