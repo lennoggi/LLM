@@ -20,8 +20,8 @@ void layer_norm(      vector<double> &vecs,
                       vector<double> *sigmas_inv) {
     /* Specifying 'long int' explicitly here so that the compiler knows it has
      * to pick std::div(long int a, long int b) (std::div_t is overloaded)      */
-    const long int ntot     = vecs.size();
-    const long int vec_size = scale.size();
+    const long int ntot     = static_cast<long int>(vecs.size());
+    const long int vec_size = static_cast<long int>(scale.size());
 
     if (shift.size() != vec_size) {
         throw runtime_error("layer_normalization(): shift.size() must equal scale.size(), which in turn must equal the size of each of the input vectors");
@@ -39,8 +39,8 @@ void layer_norm(      vector<double> &vecs,
 
     for (auto m = decltype(nvecs){0}; m < nvecs; ++m) {
         const auto idx_m = m*vec_size;
-        double mean      = 0.; 
-        double sum_diffs = 0.; 
+        double mean      = 0.0; 
+        double sum_diffs = 0.0; 
 
         /* Welford's algorithm to compute the mean and variance of a
          * sample in one pass and without a potential catastrophic
@@ -53,14 +53,14 @@ void layer_norm(      vector<double> &vecs,
                    sum_diffs += delta1*delta2;
         }
 
-        assert(sum_diffs >= 0.);
+        assert(sum_diffs >= 0.0);
 
         /* NOTE: sum_diffs==0 can only happen if all elements in
          *       vecs.at(mi) are the same, which is very unlikely     */
-        assert(sum_diffs >= 0.);
-        constexpr auto sigma_inv_fallback = 1./sqrt(static_cast<double>(VAR_TINY));
-        const     auto sigma_inv          = (sum_diffs == 0.) ? sigma_inv_fallback : sqrt(static_cast<double>(vec_size-1)/sum_diffs);
-        assert(sigma_inv > 0.);
+        assert(sum_diffs >= 0.0);
+        constexpr auto sigma_inv_fallback = 1.0/sqrt(static_cast<double>(VAR_TINY));
+        const     auto sigma_inv          = (sum_diffs == 0.0) ? sigma_inv_fallback : sqrt(static_cast<double>(vec_size-1)/sum_diffs);
+        assert(sigma_inv > 0.0);
 
         for (auto i = decltype(vec_size){0}; i < vec_size; ++i) {
             const auto mi = idx_m + i;

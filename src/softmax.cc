@@ -22,7 +22,7 @@ void softmax(vector<double> &vec) {
     }
 
     assert(isfinite(max));
-    double sum_exp = 0.; 
+    double sum_exp = 0.0; 
 
     for (auto &el : vec) {
         const auto exp_att = exp(el - max);
@@ -30,7 +30,7 @@ void softmax(vector<double> &vec) {
         sum_exp += exp_att;
     }
 
-    assert(sum_exp > 0.);
+    assert(sum_exp > 0.0);
 
     for (auto &el : vec) {
         el /= sum_exp;
