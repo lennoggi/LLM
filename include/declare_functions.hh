@@ -2,8 +2,11 @@
 #define DECLARE_FUNCTIONS_HH
 
 #include <vector>
+#include <string>
 #include <random>
 
+
+std::string file_to_string(const std::string &filename);
 
 void GELU_approx(std::vector<double> &vec,
                  std::vector<double> &vec_prime);

@@ -18,21 +18,8 @@ using namespace std;
 
 
 int main() {
-    ifstream infile(INFILE_TRAINING, ifstream::in);
-
-    if (not infile.is_open()) {
-        ostringstream err_ss;
-        err_ss << "Unable to read from file '" << INFILE_TRAINING << "'";
-        throw runtime_error(err_ss.str());
-        return 1;  // Not reached
-    }
-
-    /* Build the tokenizer object, which contains the token<->ID vocabularies
-     * and the encode() and decode() methods                                    */
-    ostringstream training_text_ss;
-    training_text_ss << infile.rdbuf();
-    const auto   &training_text(training_text_ss.str());
-    const string &input_text(INPUT_TEXT);
+    const auto training_text = file_to_string(TRAINING_FILE);
+    const auto    input_text = file_to_string(INPUT_FILE);
 
     #if (TOKENIZER == WORD)
     auto tokenizer = word_tokenizer_t(training_text);

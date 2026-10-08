@@ -9,6 +9,7 @@ set(EXE "llm")
 
 add_executable(${EXE}
     src/bpe_tokenizer.cc
+    src/file_to_string.cc
     src/gelu_approx.cc
     src/layer_normalization.cc
     src/main.cc
