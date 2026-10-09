@@ -23,10 +23,10 @@ target_include_directories(${EXE} PRIVATE
     ${CMAKE_SOURCE_DIR}/include
 )
 
-add_custom_target(symlink_training_files ALL
-    COMMAND ${CMAKE_COMMAND} -E create_symlink ${CMAKE_SOURCE_DIR}/training_files ${CMAKE_BINARY_DIR}/training_files
-    COMMENT "Symlinking training files into the build directory"
-)
+##add_custom_target(symlink_training_files ALL
+##    COMMAND ${CMAKE_COMMAND} -E create_symlink ${CMAKE_SOURCE_DIR}/training_files ${CMAKE_BINARY_DIR}/training_files
+##    COMMENT "Symlinking training files into the build directory"
+##)
 
 set(CMAKE_INSTALL_PREFIX ${CMAKE_SOURCE_DIR}/install)
 
