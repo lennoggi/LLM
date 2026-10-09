@@ -70,7 +70,7 @@
  * Set the variance of the elements of a token embedding vector to this small
  * value if that variance is exactly zero
  * -------------------------------------------------------------------------- */
-#define VAR_TINY 1.e-05
+constexpr inline double VAR_TINY = 1.e-05;
 
 
 /* ----------------------------------------------------------------------------
