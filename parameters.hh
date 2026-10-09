@@ -21,6 +21,7 @@
  * ------------------------------------------------ */
 #define LOSS_FILE "loss.asc"
 
+
 /* ----------------------
  * Tokenizer
  * Choices: "WORD", "BPE"
@@ -30,7 +31,6 @@
 #define BPE  1
 // ***********************
 #define TOKENIZER BPE
-
 
 /* ------------------------------------------------------------------
  * Maximum vocabulary size for the byte-pair encoding (BPE) tokenizer
@@ -46,6 +46,18 @@
 #define BPE_END_OF_WORD "@"
 
 
+/* -------------------------
+ * Token embedding dimension
+ * ------------------------- */
+#define DIM 5
+
+/* ------------------------------------------------------------------------
+ * Expansion factor for the two-layer feed-forward neural network with GELU
+ * activation function used after the attention layer
+ * ------------------------------------------------------------------------ */
+#define FFN_EXPANSION_FACTOR 4
+
+
 /* -----------------------------------------------------------------------------
  * Seed for the pseudo-random number generator. If positive, the seed will be
  * used and the output of the LLM will be reproducible; if negative, the machine
@@ -56,18 +68,16 @@
 #define RANDOM_SEED 123
 //#define RANDOM_SEED -1
 
-
-/* -------------------------
- * Token embedding dimension
- * ------------------------- */
-#define DIM 5
-
-
 /* ----------------------------------------
  * Number of training iterations ("epochs")
  * ---------------------------------------- */
 #define NTRAIN 10000
 //#define NTRAIN 1
+
+/* -------------------------------------------------------------
+ * Learning rate regulating the strength of the gradient descent
+ * ------------------------------------------------------------- */
+constexpr inline double LEARNING_RATE = 0.02;
 
 
 /* --------------------------------------------------------------------------
@@ -75,7 +85,6 @@
  * value if that variance is exactly zero
  * -------------------------------------------------------------------------- */
 constexpr inline double VAR_TINY = 1.e-05;
-
 
 /* ----------------------------------------------------------------------------
  * Probability of dropout, i.e., of randomly setting to zero some of the
@@ -87,26 +96,11 @@ constexpr inline double VAR_TINY = 1.e-05;
 //constexpr inline double DROPOUT_PROB = 0.1;
 constexpr inline double DROPOUT_PROB = 0.0;
 
-
-/* ------------------------------------------------------------------------
- * Expansion factor for the two-layer feed-forward neural network with GELU
- * activation function used after the attention layer
- * ------------------------------------------------------------------------ */
-#define FFN_EXPANSION_FACTOR 4
-
-
-/* -------------------------------------------------------------
- * Learning rate regulating the strength of the gradient descent
- * ------------------------------------------------------------- */
-#define LEARNING_RATE 0.02
-
-
 /* --------------------------------------------------------------
  * Small tolerance value used to stabilize the calculation of the
  * pre-final-layer-normalization, normalized input values
  * -------------------------------------------------------------- */
-#define TOLERANCE 1.e-12
-
+constexpr inline double TOLERANCE = 1.e-12;
 
 /* -----------------------------------------------------------------------------
  * Context size, i.e., the number of token IDs used to predict the next token ID
@@ -114,11 +108,10 @@ constexpr inline double DROPOUT_PROB = 0.0;
  * -----------------------------------------------------------------------------*/
 //#define CONTEXT_SIZE 5
 
-
 /* ---------
  * Verbosity
  * --------- */
 #define VERBOSE false
 
-
+\
 #endif
