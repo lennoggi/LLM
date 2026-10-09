@@ -185,15 +185,15 @@ int main() {
 
     /* Write the loss function to file at every training iteration for logging
      * purposes                                                                 */
-    ofstream loss_file("Loss.asc");
-    loss_file << "# Column 1: training iteration"
-              << "# Column 2: loss function averaged over all input tokens" << endl;
+    ofstream loss_file(LOSS_FILE);
 
-    if (not loss_file) {
+    if (not loss_file.is_open()) {
         throw runtime_error("Failed to write to file 'Loss.asc'");
-        return 1;  // not reached
+        return 1;  // Not reached
     }
 
+    loss_file << "# Column 1: training iteration" << endl
+              << "# Column 2: loss function averaged over all input tokens" << endl;
 
 
     /* ========

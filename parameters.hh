@@ -16,6 +16,10 @@
 //#define INPUT_FILE  "datasets/input/Trump.txt"
 #define INPUT_FILE  "datasets/input/SentenceCompletion.txt"
 
+/* ------------------------------------------------
+ * File storing the loss function vs training epoch
+ * ------------------------------------------------ */
+#define LOSS_FILE "loss.asc"
 
 /* ----------------------
  * Tokenizer
