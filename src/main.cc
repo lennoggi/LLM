@@ -55,7 +55,7 @@ int main() {
     cout << "INFO: machine entropy will be used to initialize the pseudo-random number generator. The LLM output will NOT be reproducible." << endl;
     mt19937 gen(rd());
     #endif
-    normal_distribution<double> ndist(0., 1./sqrt(static_cast<double>(DIM)));
+    normal_distribution<double> ndist(0.0, 1.0/sqrt(static_cast<double>(DIM)));
 
     for (auto &el : vocab_embedding) {
         el = ndist(gen);
@@ -78,9 +78,9 @@ int main() {
      *         1. Before the attention block
      *         2. Before the feed-forward neural network
      *         3. Before predicting the new token                               */
-    vector<double> scale_attention(DIM, 1.), shift_attention(DIM, 0.);
-    vector<double>       scale_ffn(DIM, 1.),       shift_ffn(DIM, 0.);
-    vector<double>     scale_final(DIM, 1.),     shift_final(DIM, 0.);
+    vector<double> scale_attention(DIM, 1.0), shift_attention(DIM, 0.0);
+    vector<double>       scale_ffn(DIM, 1.0),       shift_ffn(DIM, 0.0);
+    vector<double>     scale_final(DIM, 1.0),     shift_final(DIM, 0.0);
 
 
     /* Initialize the query, key, and value weight matrices to random values
@@ -91,7 +91,7 @@ int main() {
     vector<double> Wq(dim_sq), Wk(dim_sq), Wv(dim_sq);
 
     // Xavier/Glorot uniform distribution
-    constexpr auto xg_dim_bound = sqrt(3./(static_cast<double>(DIM)));
+    constexpr auto xg_dim_bound = sqrt(3.0/(static_cast<double>(DIM)));
     uniform_real_distribution<double> xg_dim_udist(-xg_dim_bound, xg_dim_bound);
 
     for (auto idx = decltype(dim_sq){0}; idx < dim_sq; ++idx) {
@@ -103,9 +103,9 @@ int main() {
 
     /* Initialize a uniform real distribution in [0,1] for the dropout (only
      * used if needed                                                           */
-    uniform_real_distribution<double> udist(0., 1.);
+    uniform_real_distribution<double> udist(0.0, 1.0);
 
-    if constexpr (DROPOUT_PROB > 0.) {
+    if constexpr (DROPOUT_PROB > 0.0) {
         cout << "INFO: dropout enabled with rate " << DROPOUT_PROB << endl;
     } else {
         cout << "INFO: dropout disabled" << endl;
@@ -120,12 +120,12 @@ int main() {
     constexpr auto dim_ffn_expanded = DIM*FFN_EXPANSION_FACTOR;
     constexpr auto dim_ffn_weights  = DIM*dim_ffn_expanded;
 
-    vector<double> ffn_W1(dim_ffn_weights),      ffn_W2(dim_ffn_weights);
-    vector<double> ffn_b1(dim_ffn_expanded, 0.), ffn_b2(DIM, 0.);
+    vector<double> ffn_W1(dim_ffn_weights),       ffn_W2(dim_ffn_weights);
+    vector<double> ffn_b1(dim_ffn_expanded, 0.0), ffn_b2(DIM, 0.0);
 
     // Xavier/Glorot normal distribution
-    constexpr auto xg_ffn_std = sqrt(6./(static_cast<double>(DIM) + static_cast<double>(dim_ffn_expanded)));
-    normal_distribution<double> xg_ffn_ndist(0., xg_ffn_std);
+    constexpr auto xg_ffn_std = sqrt(6.0/(static_cast<double>(DIM) + static_cast<double>(dim_ffn_expanded)));
+    normal_distribution<double> xg_ffn_ndist(0.0, xg_ffn_std);
 
     for (auto idx = decltype(dim_ffn_weights){0}; idx < dim_ffn_weights; ++idx) {
         ffn_W1.at(idx) = xg_ffn_ndist(gen);
@@ -137,7 +137,7 @@ int main() {
      * to zero
      * NOTE: think of 'logits_W' as a (DIM, nids_vocab)-shaped matrix           */
     vector<double> logits_W(dim_vocab);
-    vector<double> logits_b(nids_vocab, 0.);
+    vector<double> logits_b(nids_vocab, 0.0);
 
     for (auto v = decltype(nids_vocab){0}; v < nids_vocab; ++v) {
         const auto idx_v = v*DIM;
@@ -231,9 +231,9 @@ int main() {
 
 
         // Build the query, key, and value matrices
-        fill(queries.begin(), queries.end(), 0.);
-        fill(   keys.begin(),    keys.end(), 0.);
-        fill( values.begin(),  values.end(), 0.);
+        fill(queries.begin(), queries.end(), 0.0);
+        fill(   keys.begin(),    keys.end(), 0.0);
+        fill( values.begin(),  values.end(), 0.0);
 
         for (auto m = decltype(nids_input){0}; m < nids_input; ++m) {
             const auto idx_m = m*DIM;
@@ -265,8 +265,8 @@ int main() {
         /* TODO: allow for multi-head attention; need to swap
          *   nds_input<->nheads to allow parallelization by head. Then the
          *   normalization factor will become 1/sqrt(DIM_OUT/nheads)            */
-        constexpr auto sqrt_dim_inv = 1./sqrt_dim;
-        fill(contexts.begin(), contexts.end(), 0.);
+        constexpr auto sqrt_dim_inv = 1.0/sqrt_dim;
+        fill(contexts.begin(), contexts.end(), 0.0);
 
         for (auto m = decltype(nids_input){0}; m < nids_input; ++m) {
             const auto idx_m = m*DIM;
@@ -280,7 +280,7 @@ int main() {
 
             for (auto n = decltype(nids_input){0}; n <= m; ++n) {
                 const auto idx_n = n*DIM;
-                double attention_mn = 0.;
+                double attention_mn = 0.0;
 
                 for (auto l = decltype(DIM){0}; l < DIM; ++l) {
                     const auto ml = idx_m + l;
@@ -427,22 +427,22 @@ int main() {
          * input token. Meanwhile, accumulate the terms needed to later
          * calculate the gradients of the loss wrt the logits' weights and
          * biases.                                                              */
-        double loss = 0.;
+        double loss = 0.0;
 
-        fill(d_ffn_b1.begin(), d_ffn_b1.end(), 0.);
-        fill(d_ffn_W1.begin(), d_ffn_W1.end(), 0.);
+        fill(d_ffn_b1.begin(), d_ffn_b1.end(), 0.0);
+        fill(d_ffn_W1.begin(), d_ffn_W1.end(), 0.0);
 
-        fill(d_ffn_b2.begin(), d_ffn_b2.end(), 0.);
-        fill(d_ffn_W2.begin(), d_ffn_W2.end(), 0.);
+        fill(d_ffn_b2.begin(), d_ffn_b2.end(), 0.0);
+        fill(d_ffn_W2.begin(), d_ffn_W2.end(), 0.0);
 
-        fill(d_scale_final.begin(), d_scale_final.end(), 0.);
-        fill(d_shift_final.begin(), d_shift_final.end(), 0.);
+        fill(d_scale_final.begin(), d_scale_final.end(), 0.0);
+        fill(d_shift_final.begin(), d_shift_final.end(), 0.0);
 
-        fill(d_scale_ffn.begin(), d_scale_ffn.end(), 0.);
-        fill(d_shift_ffn.begin(), d_shift_ffn.end(), 0.);
+        fill(d_scale_ffn.begin(), d_scale_ffn.end(), 0.0);
+        fill(d_shift_ffn.begin(), d_shift_ffn.end(), 0.0);
 
-        fill(d_logits_b.begin(), d_logits_b.end(), 0.);
-        fill(d_logits_W.begin(), d_logits_W.end(), 0.);
+        fill(d_logits_b.begin(), d_logits_b.end(), 0.0);
+        fill(d_logits_W.begin(), d_logits_W.end(), 0.0);
 
 
         for (auto m = decltype(nids_input){0}; m < nids_input - 1; ++m) {
@@ -462,7 +462,7 @@ int main() {
 
             /* Build the log of the sum of the stabilized exponentials of all
              * the logits for the current input token                           */
-            double sum_exp_m = 0.;
+            double sum_exp_m = 0.0;
 
             for (auto v = decltype(nids_vocab){0}; v < nids_vocab; ++v) {
                 const auto exp_term = exp(logits.at(idx_m_vocab + v) - logits_m_max);
@@ -470,7 +470,7 @@ int main() {
                 sum_exp_m    += exp_term;
             }
 
-            assert(sum_exp_m > 0.);
+            assert(sum_exp_m > 0.0);
             const auto log_sum_exp_m = log(sum_exp_m);
 
             /* Add the loss term for the current input token
@@ -493,14 +493,14 @@ int main() {
              * vector for the current input token (i.e., for the current m
              * index) and accumulate the loss' gradients wrt the logits' weights
              * and biases and wrt the final inputs                              */
-            fill(d_inputs_m.begin(), d_inputs_m.end(), 0.);
+            fill(d_inputs_m.begin(), d_inputs_m.end(), 0.0);
 
             for (auto v = decltype(nids_vocab){0}; v < nids_vocab; ++v) {
                 auto probs_mv = probs_m.at(v);
                 probs_mv     /= sum_exp_m;
 
                 if (v == next_input_id) {
-                    probs_mv -= 1.;
+                    probs_mv -= 1.0;
                 }
 
                 d_logits_b.at(v) += probs_mv;
@@ -518,16 +518,15 @@ int main() {
              * token. Meanwhile, accumulate the loss' gradient wrt the post-FFN
              * scale and shift.
              * NOTE: stabilize if scale_final is too small                      */
-            auto dinputs_scalefinal_m_sum             = 0.;
-            auto dinputs_scalefinal_inputspreLN_m_sum = 0.;
+            auto dinputs_scalefinal_m_sum             = 0.0;
+            auto dinputs_scalefinal_inputspreLN_m_sum = 0.0;
 
             for (auto i = decltype(DIM){0}; i < DIM; ++i) {
                 const auto d_inputs_mi   = d_inputs_m.at(i);
                 const auto scale_final_i = scale_final.at(i);
 
                 const auto input_preLN_normalized_mi = (scale_final_i > TOLERANCE) ?
-                    (inputs.at(idx_m + i) - shift_final.at(i))/scale_final_i       :
-                    0.;
+                    (inputs.at(idx_m + i) - shift_final.at(i))/scale_final_i : 0.0;
                 inputs_preLN_normalized_m.at(i) = input_preLN_normalized_mi;
 
                 d_shift_final.at(i) += d_inputs_mi;
@@ -560,8 +559,7 @@ int main() {
 
                 const auto scale_ffn_i = scale_ffn.at(i);
                 const auto inputs_preFFN_normalized_mi = (scale_ffn_i > TOLERANCE) ?
-                    (inputs_preFFN.at(idx_m + i) - shift_ffn.at(i))/scale_ffn_i    :
-                    0.;
+                    (inputs_preFFN.at(idx_m + i) - shift_ffn.at(i))/scale_ffn_i : 0.0;
 
                 d_shift_ffn.at(i) += d_ffn_b2_mi;
                 d_scale_ffn.at(i) += d_ffn_b2_mi*inputs_preFFN_normalized_mi;
@@ -569,7 +567,7 @@ int main() {
 
             for (auto r = decltype(dim_ffn_expanded){0}; r < dim_ffn_expanded; ++r) {
                 const auto idx_r  = r*DIM;
-                double d_ffn_b1_r = 0.;
+                double d_ffn_b1_r = 0.0;
 
                 for (auto j = decltype(DIM){0}; j < DIM; ++j) {
                     d_ffn_b1_r += d_ffn_b2_m.at(j)*ffn_W2.at(idx_r + j)*ffn_h_prime.at(idx_m_exp + r);
@@ -585,7 +583,7 @@ int main() {
 
 
         // Compute average loss and update the model's parameters
-        auto norm_fac = 1./static_cast<double>(nids_input-1);
+        auto norm_fac = 1.0/static_cast<double>(nids_input-1);
         loss     *= norm_fac;
         norm_fac *= LEARNING_RATE;
 
