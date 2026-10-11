@@ -71,8 +71,7 @@
 /* ----------------------------------------
  * Number of training iterations ("epochs")
  * ---------------------------------------- */
-#define NTRAIN 10000
-//#define NTRAIN 1
+constexpr inline size_t NTRAIN = 10000;
 
 /* -------------------------------------------------------------
  * Learning rate regulating the strength of the gradient descent
