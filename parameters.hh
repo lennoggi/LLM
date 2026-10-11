@@ -59,14 +59,14 @@
 
 
 /* -----------------------------------------------------------------------------
- * Seed for the pseudo-random number generator. If positive, the seed will be
- * used and the output of the LLM will be reproducible; if negative, the machine
- * entropy will be used instead and results won't be reproducible.
+ * Seed for the pseudo-random number generator. If non-negative, the seed will
+ * be used and the output of the LLM will be reproducible; if negative, the
+ * machine entropy will be used instead and results won't be reproducible.
  * NOTE: the seed should be a uint32_t . If it's too long, it will be implicitly
  *   converted into a uint32_t; if it's a float/double, it will be truncated.
  * -----------------------------------------------------------------------------*/
-#define RANDOM_SEED 123
-//#define RANDOM_SEED -1
+constexpr inline long long RANDOM_SEED = 123;
+//constexpr inline long long RANDOM_SEED = -1;
 
 /* ----------------------------------------
  * Number of training iterations ("epochs")

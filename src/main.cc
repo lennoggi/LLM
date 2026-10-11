@@ -41,20 +41,23 @@ int main() {
 
 
     /* Initialize a vector representation ("embedding") of each token in the
-     * vocabulary with random numbers (to be optimized during training later on */
+     * vocabulary with random numbers to be optimized during training later on  */
     const auto nids_vocab = tokenizer.vocab_token2id.size();
     const auto dim_vocab  = nids_vocab*DIM;
     vector<double> vocab_embedding(dim_vocab);
 
-    random_device rd;
-    #if (RANDOM_SEED > 0)
-    cout << "INFO: seed " << RANDOM_SEED
-         << " will be used to initialize the pseudo-random number generator. The LLM output will be reproducible." << endl;
-    mt19937 gen(RANDOM_SEED);
-    #else
-    cout << "INFO: machine entropy will be used to initialize the pseudo-random number generator. The LLM output will NOT be reproducible." << endl;
-    mt19937 gen(rd());
-    #endif
+    mt19937 gen;
+
+    if constexpr (RANDOM_SEED >= 0) {
+        cout << "INFO: seed " << RANDOM_SEED
+             << " will be used to initialize the pseudo-random number generator. The LLM output will be reproducible." << endl;
+        gen.seed(static_cast<std::mt19937::result_type>(RANDOM_SEED));
+    } else {
+        cout << "INFO: machine entropy will be used to initialize the pseudo-random number generator. The LLM output will NOT be reproducible." << endl;
+        random_device rd;
+        gen.seed(rd());
+    }
+
     normal_distribution<double> ndist(0.0, 1.0/sqrt(static_cast<double>(DIM)));
 
     for (auto &el : vocab_embedding) {
