@@ -112,5 +112,5 @@ constexpr inline double TOLERANCE = 1.e-12;
  * --------- */
 #define VERBOSE false
 
-\
+
 #endif
