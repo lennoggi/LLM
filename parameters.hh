@@ -35,7 +35,7 @@
 /* ------------------------------------------------------------------
  * Maximum vocabulary size for the byte-pair encoding (BPE) tokenizer
  * ------------------------------------------------------------------ */
-#define BPE_MAX_VOCAB_SIZE 200
+constexpr inline size_t BPE_MAX_VOCAB_SIZE = 200;
 
 /* -------------------------------------------------------------------------
  * 'end-of-word' character to be added to each word during the BPE training
