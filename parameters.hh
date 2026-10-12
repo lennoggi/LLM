@@ -55,7 +55,7 @@
  * Expansion factor for the two-layer feed-forward neural network with GELU
  * activation function used after the attention layer
  * ------------------------------------------------------------------------ */
-#define FFN_EXPANSION_FACTOR 4
+constexpr inline size_t FFN_EXPANSION_FACTOR = 4;
 
 
 /* -----------------------------------------------------------------------------
