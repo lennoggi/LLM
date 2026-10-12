@@ -49,7 +49,7 @@
 /* -------------------------
  * Token embedding dimension
  * ------------------------- */
-#define DIM 5
+constexpr inline size_t DIM = 5;
 
 /* ------------------------------------------------------------------------
  * Expansion factor for the two-layer feed-forward neural network with GELU
