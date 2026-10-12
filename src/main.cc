@@ -619,9 +619,9 @@ int main() {
 
         // TODO: update all the other weights in the model
 
-        #if (VERBOSE)
-        cout << "Training epoch " << it << " completed" << endl;
-        #endif
+        if constexpr (VERBOSE) {
+            cout << "Training epoch " << it << " completed" << endl;
+        }
 
         // XXX
         // Predict the next token

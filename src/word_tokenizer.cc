@@ -43,10 +43,10 @@ word_tokenizer_t::word_tokenizer_t(const string &training_text) {
         if ((this->vocab_token2id).emplace(token, id).second) {
             ++id;
         } else {
-            #if (VERBOSE)
-            cout << "Skipping repeated token '" << token
-                 << "' while creating the token-to-ID vocabulary" << endl;
-            #endif
+            if constexpr (VERBOSE) {
+                cout << "Skipping repeated token '" << token
+                     << "' while creating the token-to-ID vocabulary" << endl;
+            }
         }
 
         ++tokens_it;

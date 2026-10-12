@@ -86,10 +86,10 @@ bpe_tokenizer_t::bpe_tokenizer_t(const string &training_text,
             if ((this->vocab_token2id).emplace(token, id).second) {
                 ++id;
             } else {
-                #if (VERBOSE)
-                cout << "Skipping repeated token '" << token
-                     << "' while creating the token-to-ID vocabulary" << endl;
-                #endif
+                if constexpr (VERBOSE) {
+                    cout << "Skipping repeated token '" << token
+                         << "' while creating the token-to-ID vocabulary" << endl;
+                }
             }
         }
     }
@@ -184,10 +184,10 @@ bpe_tokenizer_t::bpe_tokenizer_t(const string &training_text,
         if ((this->vocab_token2id).emplace(most_common_symbolpair, id).second) {
             ++id;
         } else {
-            #if (VERBOSE)
-            cout << "Skipping repeated token '" << most_common_symbolpair 
-                 << "' while creating the token-to-ID vocabulary" << endl;
-            #endif
+            if constexpr (VERBOSE) {
+                cout << "Skipping repeated token '" << most_common_symbolpair 
+                     << "' while creating the token-to-ID vocabulary" << endl;
+            }
         }
     }
 
@@ -313,10 +313,10 @@ vector<size_t> bpe_tokenizer_t::encode(const string &text) {
                     i_symbolpair_replace = i;
                       symbolpair_replace = symbol_pair;
                 } catch (const exception &e) {
-                    #if (VERBOSE)
-                    cout << "Skipping unknown symbol pair '" << symbol_pair
-                         << "' while encoding the text (exception: \"" << e.what() << "\")" << endl;
-                    #endif
+                    if constexpr (VERBOSE) {
+                        cout << "Skipping unknown symbol pair '" << symbol_pair
+                             << "' while encoding the text (exception: \"" << e.what() << "\")" << endl;
+                    }
                 }
             }
     
@@ -326,9 +326,9 @@ vector<size_t> bpe_tokenizer_t::encode(const string &text) {
                 word_strvec.erase(word_strvec.begin() + i_symbolpair_replace + 1);
             } else {
                 symbol_merges_possible = false;
-                #if (VERBOSE)
-                cout << "No tokens found for this word in the token-to-ID vocabulary (this may just mean all tokens from the vocabulary have been merged into compound tokens)" << endl;
-                #endif
+                if constexpr (VERBOSE) {
+                    cout << "No tokens found for this word in the token-to-ID vocabulary (this may just mean all tokens from the vocabulary have been merged into compound tokens)" << endl;
+                }
             }
         }
     }

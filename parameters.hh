@@ -1,7 +1,6 @@
 #ifndef PARAMETERS_HH
 #define PARAMETERS_HH
 
-
 /* ----------------
  * Training dataset
  * ---------------- */
@@ -110,7 +109,6 @@ constexpr inline double TOLERANCE = 1.e-12;
 /* ---------
  * Verbosity
  * --------- */
-#define VERBOSE false
-
+constexpr inline bool VERBOSE = false;
 
 #endif
