@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <limits>
 #include <stdexcept>
+#include <chrono>
 
 #include "check_parameters.hh"
 #include "types.hh"
@@ -202,6 +203,8 @@ int main() {
     /* ========
      * Training
      * ======== */
+    const auto training_start = std::chrono::steady_clock::now();
+
     for (auto it = decltype(NTRAIN){0}; it < NTRAIN; ++it) {
         /* ------------
          * Forward pass
@@ -637,7 +640,10 @@ int main() {
     }
 
 
-    cout << "INFO: all done" << endl;
+    const auto training_stop = std::chrono::steady_clock::now();
+    const std::chrono::duration<double> training_time_s = training_stop - training_start;
+
+    cout << "INFO: all done. Training took " << training_time_s.count() << " s." << endl;
 
 
 
