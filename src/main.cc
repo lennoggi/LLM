@@ -8,6 +8,7 @@
 #include <limits>
 #include <stdexcept>
 #include <chrono>
+#include <limits>
 
 #include <cblas.h>
 
@@ -44,7 +45,7 @@ int main() {
 
 
     /* Initialize a vector representation ("embedding") of each token in the
-     * vocabulary with random numbers to be optimized during training later on  */
+     * vocabulary with random numbers to be optimized during training later on */
     const auto nids_vocab = tokenizer.vocab_token2id.size();
     const auto dim_vocab  = nids_vocab*DIM;
     vector<double> vocab_embedding(dim_vocab);
@@ -83,7 +84,7 @@ int main() {
      *       normalization:
      *         1. Before the attention block
      *         2. Before the feed-forward neural network
-     *         3. Before predicting the new token                               */
+     *         3. Before predicting the new token */
     vector<double> scale_attention(DIM, 1.0), shift_attention(DIM, 0.0);
     vector<double>       scale_ffn(DIM, 1.0),       shift_ffn(DIM, 0.0);
     vector<double>     scale_final(DIM, 1.0),     shift_final(DIM, 0.0);
@@ -92,7 +93,7 @@ int main() {
     /* Initialize the query, key, and value weight matrices to random values
      * NOTE: declared as std::vector so they are allocated on the heap.
      *       std::array allocates on the stack and this can overflow for very
-     *       large DIM*DIM.                                                     */
+     *       large DIM*DIM. */
     constexpr auto dim_sq = DIM*DIM;
     vector<double> Wq(dim_sq), Wk(dim_sq), Wv(dim_sq);
 
@@ -108,7 +109,7 @@ int main() {
 
 
     /* Initialize a uniform real distribution in [0,1] for the dropout (only
-     * used if needed                                                           */
+     * used if needed */
     uniform_real_distribution<double> udist(0.0, 1.0);
 
     if constexpr (DROPOUT_PROB > 0.0) {
@@ -122,7 +123,7 @@ int main() {
      * randomly, and the biases to zero
      * NOTE: think of ffn_W1 and ffn_W2 as a matrices with dimensions:
      *   - ffn_W1(DIM, DIM*FFN_EXPANSION_FACTOR)
-     *   - ffn_W2(DIM*FFN_EXPANSION_FACTOR, DIM)                                */
+     *   - ffn_W2(DIM*FFN_EXPANSION_FACTOR, DIM) */
     constexpr auto dim_ffn_expanded = DIM*FFN_EXPANSION_FACTOR;
     constexpr auto dim_ffn_weights  = DIM*dim_ffn_expanded;
 
@@ -141,7 +142,7 @@ int main() {
 
     /* Initialize the logits weights to the vocabulary embedding and the biases
      * to zero
-     * NOTE: think of 'logits_W' as a (DIM, nids_vocab)-shaped matrix           */
+     * NOTE: think of 'logits_W' as a (DIM, nids_vocab)-shaped matrix */
     vector<double> logits_W(dim_vocab);
     vector<double> logits_b(nids_vocab, 0.0);
 
@@ -153,16 +154,14 @@ int main() {
     }
 
 
-    /* Preallocate the input and context vectors, the query, key, and value
-     * matrices, and the FFN hidden and output layers, the logits vectors, the
-     * loss' gradients wrt to the model's parameters, and some helpers to
-     * improve performance                                                      */
-    vector<double> inputs(dim_tot), inputs_preFFN(dim_tot), contexts(dim_tot);
+    /* Preallocate the input vectors, the query, key, and value matrices, the
+     * attention and context matrices, the FFN hidden and output layers, the
+     * logits vectors, the loss' gradients wrt to the model's parameters, and
+     * some helpers to improve performance */
+    vector<double> inputs(dim_tot), inputs_preFFN(dim_tot);
     vector<double> queries(dim_tot), keys(dim_tot), values(dim_tot);
-
-    // XXX
-    //const auto nids_input_sq = nids_input*nids_input;
-    //vector<double> attention(nids_input*nids_input);
+    vector<double> attention(nids_input*nids_input);
+    vector<double> context(dim_tot);
 
     const auto dim_tot_expanded = nids_input*dim_ffn_expanded;
     vector<double> ffn_h(dim_tot_expanded), ffn_h_prime(dim_tot_expanded);
@@ -194,7 +193,7 @@ int main() {
 
 
     /* Write the loss function to file at every training iteration for logging
-     * purposes                                                                 */
+     * purposes */
     ofstream loss_file(LOSS_FILE);
 
     if (not loss_file.is_open()) {
@@ -215,12 +214,12 @@ int main() {
     const auto training_start = std::chrono::steady_clock::now();
 
     for (auto it = decltype(NTRAIN){0}; it < NTRAIN; ++it) {
-        /* ------------
+        /* ************
          * Forward pass
-         * ------------ */
+         * ************ */
         /* Map each input token ID into the corresponding embedding vector
          * (scaled by sqrt(DIM) to keep magnitudes consistent) and add the
-         * corresponding positional encoding vectors                            */
+         * corresponding positional encoding vectors */
         for (auto m = decltype(nids_input){0}; m < nids_input; ++m) {
             const auto idx_m = m*DIM;
             const auto id_input = ids_input.at(m);
@@ -239,11 +238,13 @@ int main() {
 
         /* Layer normalization: have the components of each input embedding
          * vector average out to 0 and have variance 1, but then scale and
-         * shift them by trainable parameters, to make training more stable     */
+         * shift them by trainable parameters, to make training more stable */
         layer_norm(inputs, scale_attention, shift_attention);
 
 
-        /* Build the query, key, and value matrices
+        /* ------------------------------
+         * Query, key, and value matrices
+         * ------------------------------
          * - inputs:     nids_input*DIM
          * - Wq, Wk, Wv: DIM*DIM
          * - queries = inputs*Wq: nids_input*DIM
@@ -262,69 +263,76 @@ int main() {
             0.0, values.data(), DIM);
 
 
-        /* Compute the attention scores and the context vectors (matrix),
-         * i.e., the sum of the value vectors (columns of the values matrix)
-         * weighted by the attention scores along the rows of the attention
-         * matrix
-         * NOTE: no need to store the full attention matrix: only compute each
-         *       row and the corresponding context vector                       */
-        /* TODO: allow for multi-head attention; need to swap
+        /* ----------------
+         * Attention matrix
+         * ----------------
+         * attention = queries * (keys^T)
+         * - queries:   nids_input*DIM
+         * - keys^T:    DIM*nids_input
+         * - attention: nids_input*nids_input
+         * TODO: allow for multi-head attention; need to swap
          *   nds_input<->nheads to allow parallelization by head. Then the
-         *   normalization factor will become 1/sqrt(DIM_OUT/nheads)            */
-        fill(contexts.begin(), contexts.end(), 0.0);
+         *   normalization factor will become 1/sqrt(DIM_OUT/nheads) */
+        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+            nids_input, nids_input, DIM, sqrt_dim_inv, queries.data(), DIM, keys.data(), DIM,
+            0.0, attention.data(), nids_input);
 
+
+        /* ----------------------------------------------------
+         * Causal attention + softmax normalization (in one go)
+         * ----------------------------------------------------
+         * 1. Causal attention: zero out the upper triangular part of the
+         *    attention matrix A
+         * 2. Softmax normalization:  A[m,n] -> e[m,n] / sum_m(e[m,n])  with
+         *                            e[m,n] := exp(A[m,n]-max(A[m,:]))
+         * TODO: implement "flash attention": tile the computation of A=Q*(K^T)
+         *   into smaller row blocks of Q + column blocs of K^T without storing
+         *   the full attention matrix A and run an "online" softmax
+         *   normalization that doesn't need a full row of A to find the row's
+         *   max value */
         for (auto m = decltype(nids_input){0}; m < nids_input; ++m) {
-            const auto idx_m = m*DIM;
-
-            /* Causal attention: each token ID in the input text only attends to
-             * all the previous ones, so that the attention scores in the upper
-             * triangular part of the attention scores matrix (i.e., all the
-             * attention scores for n > m for row/token m) are zero (not even
-             * defined here)                                                    */
-            vector<double> attention_m(m+1);  // Instead of attention_m(nids)
+            double *row    = &attention[m*nids_input];
+            double row_max = -numeric_limits<double>::infinity();
 
             for (auto n = decltype(nids_input){0}; n <= m; ++n) {
-                const auto idx_n = n*DIM;
-                double attention_mn = 0.0;
-
-                for (auto l = decltype(DIM){0}; l < DIM; ++l) {
-                    const auto ml = idx_m + l;
-                    const auto nl = idx_n + l;
-                    attention_mn += queries.at(ml)*keys.at(nl);
+                if (row[n] > row_max) {
+                    row_max = row[n];
                 }
-
-                /* Scale the attention score by
-                 * sqrt(len(keys[:,1]) = sqrt(DIM) to improve training behavior
-                 * later on                                                     */
-                attention_m.at(n) = attention_mn*sqrt_dim_inv;
             }
 
-            /* Normalize the attention scores for the current token (i.e., for
-             * the current row of the attention matrix) using a stabilized
-             * softmax                                                          */
-            softmax(attention_m);
+            // XXX: remove assertion
+            assert(isfinite(row_max));
+            double sum_exp = 0.0; 
 
-            /* Calculate the context vector for the current token
-             * NOTE: swapping the more "natural" loop order (j out, n in) to
-             *       improve the memory access pattern in the values matrix     */
             for (auto n = decltype(nids_input){0}; n <= m; ++n) {
-                const auto idx_n = n*DIM;
-                const auto attention_mn = attention_m.at(n);
+                row[n]   = exp(row[n] - row_max);
+                sum_exp += row[n];
+            }
 
-                for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-                    contexts.at(idx_m + i) += attention_mn*values.at(idx_n + i);
-                }
+            // XXX: remove assertion
+            assert(sum_exp > 0.0);
+            const double inv_sum_exp = 1.0/sum_exp;
+
+            for (auto n = decltype(nids_input){0}; n <= m; ++n) {
+                row[n] *= inv_sum_exp;
+            }
+
+            for (auto n = decltype(nids_input){m+1}; n < nids_input; ++n) {
+                row[n] = 0.0;
             }
         }
 
-        // XXX
-        /* Attention matrix
-         * - queries:                                    nids_input*DIM
-         * - keys^T:                                     DIM*nids_input
-         * - attention = (1/sqrt(DIM))*queries*(keys^T): nids_input*nids_input */
-        //cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
-        //    nids_input, nids_input, DIM, sqrt_dim_inv, queries.data(), DIM, keys.data(), DIM,
-        //    0.0, attention.data(), nids_input);
+
+        /* ------------------------
+         * Build the context matrix
+         * ------------------------
+         * context = attention*values
+         * - attention: nids_input*nids_input
+         * - values:    nids_input*DIM
+         * - context    nids_input*DIM */
+        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+            nids_input, DIM, nids_input, 1.0, attention.data(), nids_input, values.data(), DIM,
+            0.0, context.data(), DIM);
 
 
         /* *DROPOUT:* randomly set some of the components of the context vectors
@@ -334,17 +342,17 @@ int main() {
          *    the context vector constant.
          * *SHORTCUT CONNECTION:* add the context vectors to the corresponding
          *    input vectors to preserve the quality of the gradient flow during
-         *    the backward step                                                 */
-        skip_conn_dropout(inputs, contexts, udist, gen);
+         *    the backward step */
+        skip_conn_dropout(inputs, context, udist, gen);
 
         /* Another layer normalization
-         * NOTE: save inputs at this stage for the backward pass                */
+         * NOTE: save inputs at this stage for the backward pass */
         layer_norm(inputs, scale_ffn, shift_ffn);
         inputs_preFFN = inputs;
 
 
         /* Expanding-contracting two-layer feed-forward neural network:
-         *   FFN(x) = (GELU(x*W1 + b1))*W2 + b2                                 */
+         *   FFN(x) = (GELU(x*W1 + b1))*W2 + b2 */
         for (auto m = decltype(nids_input){0}; m < nids_input; ++m) {
             const auto idx_m     = m*DIM;
             const auto idx_m_exp = m*dim_ffn_expanded;
@@ -364,7 +372,7 @@ int main() {
         }
 
         /* Not quite GELU, just an approximation
-         * NOTE: derivative of pre-GELU inputs needed for the backward pass     */
+         * NOTE: derivative of pre-GELU inputs needed for the backward pass */
         GELU_approx(ffn_h, ffn_h_prime);
 
         for (auto m = decltype(nids_input){0}; m < nids_input; ++m) {
@@ -387,7 +395,7 @@ int main() {
 
 
         /* Apply dropout (if enabled) to the network's output and set up a skip
-         * connection between that and the input vectors                        */
+         * connection between that and the input vectors */
         skip_conn_dropout(inputs, ffn_out, udist, gen);
 
 
@@ -395,7 +403,7 @@ int main() {
          * NOTE: save the inverse standard deviations for each input token for
          *   the backward step. The pre-layer-norm inputs will also be needed
          *   but they will be reconstructed as they are too many to be stored
-         *   while cheap to recalculate.                                        */
+         *   while cheap to recalculate. */
         layer_norm(inputs, scale_final, shift_final, &sigmas_inv_preLN);
 
 
@@ -425,7 +433,7 @@ int main() {
          *   logit is the largest (and so it doesn't change the next predicted
          *   token). However, we'll later introduce some variability, whereby
          *   the next predicted token is not the one corresponding to the
-         *   largest logit, and softmax will be useful then.                    */
+         *   largest logit, and softmax will be useful then. */
         //softmax(last_logits);  // XXX: last_logits_defined below
         // XXX XXX XXX XXX XXX XXX
         // XXX XXX XXX XXX XXX XXX
@@ -433,14 +441,14 @@ int main() {
 
 
 
-        /* -------------
+        /* *************
          * Backward pass
-         * ------------- */
+         * ************* */
         /* Compute the cross-entropy loss between the input and the target
          * tokens, where the "target" token of each input token is just the next
          * input token. Meanwhile, accumulate the terms needed to later
          * calculate the gradients of the loss wrt the logits' weights and
-         * biases.                                                              */
+         * biases. */
         double loss = 0.0;
 
         fill(d_ffn_b1.begin(), d_ffn_b1.end(), 0.0);
@@ -475,7 +483,7 @@ int main() {
             }
 
             /* Build the log of the sum of the stabilized exponentials of all
-             * the logits for the current input token                           */
+             * the logits for the current input token */
             double sum_exp_m = 0.0;
 
             for (auto v = decltype(nids_vocab){0}; v < nids_vocab; ++v) {
@@ -498,7 +506,7 @@ int main() {
              *   = -log( (exp(z[m][v+1] - logits_m_max)) / sum_exp_m) ,
              *
              *  which implicitly applies softmax normalization to each logit to
-             *  convert it into a probability                                   */
+             *  convert it into a probability */
             const auto next_input_id = ids_input.at(m+1);
             loss += -(logits.at(idx_m_vocab + next_input_id) - logits_m_max) + log_sum_exp_m;
 
@@ -506,7 +514,7 @@ int main() {
             /* Normalize the softmax probabilities for each logit in the logits
              * vector for the current input token (i.e., for the current m
              * index) and accumulate the loss' gradients wrt the logits' weights
-             * and biases and wrt the final inputs                              */
+             * and biases and wrt the final inputs */
             fill(d_inputs_m.begin(), d_inputs_m.end(), 0.0);
 
             for (auto v = decltype(nids_vocab){0}; v < nids_vocab; ++v) {
@@ -531,7 +539,7 @@ int main() {
              * mean and scaled by its standard deviation) for the current input
              * token. Meanwhile, accumulate the loss' gradient wrt the post-FFN
              * scale and shift.
-             * NOTE: stabilize if scale_final is too small                      */
+             * NOTE: stabilize if scale_final is too small */
             auto dinputs_scalefinal_m_sum             = 0.0;
             auto dinputs_scalefinal_inputspreLN_m_sum = 0.0;
 
@@ -554,7 +562,7 @@ int main() {
 
 
             /* Build the loss gradients wrt to the FFN weights and biases and
-             * the pre-FFN layer normalization scale and shift                  */
+             * the pre-FFN layer normalization scale and shift */
             const auto sigma_inv_preLN_m = sigmas_inv_preLN.at(m);
 
             for (auto i = decltype(DIM){0}; i < DIM; ++i) {
