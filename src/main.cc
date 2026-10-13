@@ -217,7 +217,10 @@ int main() {
         /* ************
          * Forward pass
          * ************ */
-        /* Map each input token ID into the corresponding embedding vector
+        /* --------------------------
+         * Build the vector embedding
+         * --------------------------
+         * Map each input token ID into the corresponding embedding vector
          * (scaled by sqrt(DIM) to keep magnitudes consistent) and add the
          * corresponding positional encoding vectors */
         for (auto m = decltype(nids_input){0}; m < nids_input; ++m) {
@@ -236,37 +239,37 @@ int main() {
         // TODO: dropout of 'inputs' without any skip connections
 
 
-        /* Layer normalization: have the components of each input embedding
-         * vector average out to 0 and have variance 1, but then scale and
-         * shift them by trainable parameters, to make training more stable */
+        /* -------------------
+         * Layer normalization
+         * -------------------
+         * Rescale the each input embedding vector so that its components
+         * average out to 0 and have variance 1, but then scale and shift them
+         * by trainable parameters, to make training more stable */
         layer_norm(inputs, scale_attention, shift_attention);
-
 
         /* ------------------------------
          * Query, key, and value matrices
+         * - queries = inputs*Wq
+         * -    keys = inputs*Wk
+         * -  values = inputs*Wv
          * ------------------------------
          * - inputs:     nids_input*DIM
          * - Wq, Wk, Wv: DIM*DIM
-         * - queries = inputs*Wq: nids_input*DIM
-         * -    keys = inputs*Wk: nids_input*DIM
-         * -  values = inputs*Wv: nids_input*DIM */
+         * - queries, keys, values: nids_input*DIM */
         cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
             nids_input, DIM, DIM, 1.0, inputs.data(), DIM, Wq.data(), DIM,
             0.0, queries.data(), DIM);
-
         cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
             nids_input, DIM, DIM, 1.0, inputs.data(), DIM, Wk.data(), DIM,
             0.0, keys.data(), DIM);
-
         cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
             nids_input, DIM, DIM, 1.0, inputs.data(), DIM, Wv.data(), DIM,
             0.0, values.data(), DIM);
 
-
-        /* ----------------
+        /* ----------------------------------
          * Attention matrix
-         * ----------------
-         * attention = queries * (keys^T)
+         *   attention = queries * (keys^T)
+         * ----------------------------------
          * - queries:   nids_input*DIM
          * - keys^T:    DIM*nids_input
          * - attention: nids_input*nids_input
@@ -323,10 +326,10 @@ int main() {
         }
 
 
-        /* ------------------------
-         * Build the context matrix
-         * ------------------------
-         * context = attention*values
+        /* ----------------------------
+         * Context matrix
+         *   context = attention*values
+         * ----------------------------
          * - attention: nids_input*nids_input
          * - values:    nids_input*DIM
          * - context    nids_input*DIM */
@@ -334,25 +337,31 @@ int main() {
             nids_input, DIM, nids_input, 1.0, attention.data(), nids_input, values.data(), DIM,
             0.0, context.data(), DIM);
 
-
-        /* *DROPOUT:* randomly set some of the components of the context vectors
+        /* -------------------------------------
+         * Dropout plus skip/shortcut connection
+         * -------------------------------------
+         * - DROPOUT: randomly set some of the components of the context vectors
          *    to zero to avoid having the model overly rely on a few components
          *    during training. On the other hand, components which are not set
          *    to zero must be rescaled so as to keep the expectation value over
          *    the context vector constant.
-         * *SHORTCUT CONNECTION:* add the context vectors to the corresponding
+         * - SHORTCUT CONNECTION: add the context vectors to the corresponding
          *    input vectors to preserve the quality of the gradient flow during
          *    the backward step */
         skip_conn_dropout(inputs, context, udist, gen);
 
-        /* Another layer normalization
+        /* -------------------
+         * Layer normalization
+         * -------------------
          * NOTE: save inputs at this stage for the backward pass */
         layer_norm(inputs, scale_ffn, shift_ffn);
         inputs_preFFN = inputs;
 
 
-        /* Expanding-contracting two-layer feed-forward neural network:
-         *   FFN(x) = (GELU(x*W1 + b1))*W2 + b2 */
+        /* -----------------------------------------------------------
+         * Expanding-contracting two-layer feed-forward neural network
+         *     FFN(x) = (GELU(x*W1 + b1))*W2 + b2
+         * ----------------------------------------------------------- */
         for (auto m = decltype(nids_input){0}; m < nids_input; ++m) {
             const auto idx_m     = m*DIM;
             const auto idx_m_exp = m*dim_ffn_expanded;
