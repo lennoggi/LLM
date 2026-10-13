@@ -9,6 +9,8 @@
 #include <stdexcept>
 #include <chrono>
 
+#include <cblas.h>
+
 #include "check_parameters.hh"
 #include "types.hh"
 #include "declare_functions.hh"
@@ -158,6 +160,10 @@ int main() {
     vector<double> inputs(dim_tot), inputs_preFFN(dim_tot), contexts(dim_tot);
     vector<double> queries(dim_tot), keys(dim_tot), values(dim_tot);
 
+    // XXX
+    //const auto nids_input_sq = nids_input*nids_input;
+    //vector<double> attention(nids_input*nids_input);
+
     const auto dim_tot_expanded = nids_input*dim_ffn_expanded;
     vector<double> ffn_h(dim_tot_expanded), ffn_h_prime(dim_tot_expanded);
     vector<double> ffn_out(dim_tot);
@@ -203,6 +209,9 @@ int main() {
     /* ========
      * Training
      * ======== */
+    constexpr double sqrt_dim     = sqrt(static_cast<double>(DIM));
+    constexpr double sqrt_dim_inv = 1.0/sqrt_dim;
+
     const auto training_start = std::chrono::steady_clock::now();
 
     for (auto it = decltype(NTRAIN){0}; it < NTRAIN; ++it) {
@@ -212,8 +221,6 @@ int main() {
         /* Map each input token ID into the corresponding embedding vector
          * (scaled by sqrt(DIM) to keep magnitudes consistent) and add the
          * corresponding positional encoding vectors                            */
-        constexpr auto sqrt_dim = sqrt(static_cast<double>(DIM));
-
         for (auto m = decltype(nids_input){0}; m < nids_input; ++m) {
             const auto idx_m = m*DIM;
             const auto id_input = ids_input.at(m);
@@ -236,30 +243,23 @@ int main() {
         layer_norm(inputs, scale_attention, shift_attention);
 
 
-        // Build the query, key, and value matrices
-        fill(queries.begin(), queries.end(), 0.0);
-        fill(   keys.begin(),    keys.end(), 0.0);
-        fill( values.begin(),  values.end(), 0.0);
+        /* Build the query, key, and value matrices
+         * - inputs:     nids_input*DIM
+         * - Wq, Wk, Wv: DIM*DIM
+         * - queries = inputs*Wq: nids_input*DIM
+         * -    keys = inputs*Wk: nids_input*DIM
+         * -  values = inputs*Wv: nids_input*DIM */
+        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+            nids_input, DIM, DIM, 1.0, inputs.data(), DIM, Wq.data(), DIM,
+            0.0, queries.data(), DIM);
 
-        for (auto m = decltype(nids_input){0}; m < nids_input; ++m) {
-            const auto idx_m = m*DIM;
+        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+            nids_input, DIM, DIM, 1.0, inputs.data(), DIM, Wk.data(), DIM,
+            0.0, keys.data(), DIM);
 
-            /* NOTE: swapping the more "natural" loop order (j out, k in) to
-             *       improve the memory access pattern in Wq, Wk, Wv            */
-            for (auto k = decltype(DIM){0}; k < DIM; ++k) {
-                const auto inputs_mk = inputs.at(idx_m + k);
-                const auto idx_k     = k*DIM;
-
-                for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-                    const auto mi = idx_m + i;
-                    const auto ki = idx_k + i;
-
-                    queries.at(mi) += inputs_mk*Wq.at(ki);
-                       keys.at(mi) += inputs_mk*Wk.at(ki);
-                     values.at(mi) += inputs_mk*Wv.at(ki);
-                }
-            }
-        }
+        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+            nids_input, DIM, DIM, 1.0, inputs.data(), DIM, Wv.data(), DIM,
+            0.0, values.data(), DIM);
 
 
         /* Compute the attention scores and the context vectors (matrix),
@@ -271,7 +271,6 @@ int main() {
         /* TODO: allow for multi-head attention; need to swap
          *   nds_input<->nheads to allow parallelization by head. Then the
          *   normalization factor will become 1/sqrt(DIM_OUT/nheads)            */
-        constexpr auto sqrt_dim_inv = 1.0/sqrt_dim;
         fill(contexts.begin(), contexts.end(), 0.0);
 
         for (auto m = decltype(nids_input){0}; m < nids_input; ++m) {
@@ -317,6 +316,15 @@ int main() {
                 }
             }
         }
+
+        // XXX
+        /* Attention matrix
+         * - queries:                                    nids_input*DIM
+         * - keys^T:                                     DIM*nids_input
+         * - attention = (1/sqrt(DIM))*queries*(keys^T): nids_input*nids_input */
+        //cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+        //    nids_input, nids_input, DIM, sqrt_dim_inv, queries.data(), DIM, keys.data(), DIM,
+        //    0.0, attention.data(), nids_input);
 
 
         /* *DROPOUT:* randomly set some of the components of the context vectors
