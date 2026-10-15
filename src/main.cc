@@ -337,9 +337,10 @@ int main() {
             nids_input, DIM, nids_input, 1.0, attention.data(), nids_input, values.data(), DIM,
             0.0, context.data(), DIM);
 
-        /* -------------------------------------
-         * Dropout plus skip/shortcut connection
-         * -------------------------------------
+        /* ---------------------------------------------------------------
+         * Dropout plus skip/shortcut connection between the input and the
+         * context
+         * ---------------------------------------------------------------
          * - DROPOUT: randomly set some of the components of the context vectors
          *    to zero to avoid having the model overly rely on a few components
          *    during training. On the other hand, components which are not set
@@ -362,53 +363,63 @@ int main() {
          * Expanding-contracting two-layer feed-forward neural network
          *     FFN(x) = (GELU(x*W1 + b1))*W2 + b2
          * ----------------------------------------------------------- */
+        /* Step 1: ffn_h = inputs*ffn_W1 + / [ffn_b1] \ |
+                                           |   ...    | | dim_ffn_expanded times
+                                           \ [ffn_b1] / |
+         * - inputs: nids_input*DIM
+         * - ffn_W1: DIM*(DIM*FFN_EXPANSION_FACTOR) = DIM*dim_ffn_expanded
+         * - ffn_h:  nids_input*dim_ffn_expanded */
         for (auto m = decltype(nids_input){0}; m < nids_input; ++m) {
-            const auto idx_m     = m*DIM;
-            const auto idx_m_exp = m*dim_ffn_expanded;
-
-            for (auto r = decltype(dim_ffn_expanded){0}; r < dim_ffn_expanded; ++r) {
-                ffn_h.at(idx_m_exp + r) = ffn_b1.at(r);
-            }
-
-            for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-                const auto inputs_mi = inputs.at(idx_m + i);
-                const auto idx_i_exp = i*dim_ffn_expanded;
-
-                for (auto r = decltype(dim_ffn_expanded){0}; r < dim_ffn_expanded; ++r) {
-                    ffn_h.at(idx_m_exp + r) += inputs_mi*ffn_W1.at(idx_i_exp + r);
-                }
-            }
+            std::copy(ffn_b1.begin(), ffn_b1.end(), ffn_h.begin() + m*dim_ffn_expanded);
         }
 
-        /* Not quite GELU, just an approximation
+        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+            nids_input, dim_ffn_expanded, DIM, 1.0, inputs.data(), DIM, ffn_W1.data(), dim_ffn_expanded,
+            1.0, ffn_h.data(), dim_ffn_expanded);
+
+
+        /* Step 2: take (an approximation of) GELU(ffn_h)
          * NOTE: derivative of pre-GELU inputs needed for the backward pass */
-        GELU_approx(ffn_h, ffn_h_prime);
+        constexpr double sqrt_2_over_pi = sqrt(2.0/M_PI);
+        constexpr double a              = 0.044715;
 
-        for (auto m = decltype(nids_input){0}; m < nids_input; ++m) {
-            const auto idx_m     = m*DIM;
-            const auto idx_m_exp = m*dim_ffn_expanded;
+        for (auto idx = decltype(dim_tot_expanded){0}; idx < dim_tot_expanded; ++idx) {
+            auto &x = ffn_h[idx];
+            const auto ax2 = a*x*x;
+            const auto sqrt_2_over_pi_x = sqrt_2_over_pi*x;
+            const auto th   = tanh(sqrt_2_over_pi_x*(1.0 + ax2));
+            const auto thp1 = th + 1.0;
 
-            for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-                ffn_out.at(idx_m + i) = ffn_b2.at(i);
-            }
-
-            for (auto r = decltype(dim_ffn_expanded){0}; r < dim_ffn_expanded; ++r) {
-                const auto ffn_h_mr = ffn_h.at(idx_m_exp + r);
-                const auto idx_r    = r*DIM;
-
-                for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-                    ffn_out.at(idx_m + i) += ffn_h_mr*ffn_W2.at(idx_r + i);
-                }
-            }
+            x *= 0.5*thp1;
+            ffn_h_prime[idx] = 0.5*(thp1 + sqrt_2_over_pi_x*(1.0 + 3.0*ax2)*(1.0 - th*th));
         }
 
 
-        /* Apply dropout (if enabled) to the network's output and set up a skip
-         * connection between that and the input vectors */
+        /* Step 3: ffn_out = ffn_h*ffn_W2 + / [ffn_b2] \ |
+                                            |   ...    | | DIM
+                                            \ [ffn_b2] / |
+         * - ffn_h:  nids_input*dim_ffn_expanded
+         * - ffn_W2: (DIM*FFN_EXPANSION_FACTOR)*DIM = dim_ffn_expanded*DIM
+         * - ffn_out: nids_input*DIM */
+        for (auto m = decltype(nids_input){0}; m < nids_input; ++m) {
+            std::copy(ffn_b2.begin(), ffn_b2.end(), ffn_out.begin() + m*DIM);
+        }
+
+        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+            nids_input, DIM, dim_ffn_expanded, 1.0, ffn_h.data(), dim_ffn_expanded, ffn_W2.data(), DIM,
+            1.0, ffn_out.data(), DIM);
+
+
+        /* --------------------------------------------------------------------
+         * Dropout plus skip/shortcut connection between the network output and
+         * the input
+         * -------------------------------------------------------------------- */
         skip_conn_dropout(inputs, ffn_out, udist, gen);
 
 
-        /* Final layer normalization
+        /* -------------------
+         * Layer normalization
+         * -------------------
          * NOTE: save the inverse standard deviations for each input token for
          *   the backward step. The pre-layer-norm inputs will also be needed
          *   but they will be reconstructed as they are too many to be stored
