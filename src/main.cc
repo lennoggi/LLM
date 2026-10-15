@@ -363,7 +363,7 @@ int main() {
          * Expanding-contracting two-layer feed-forward neural network
          *     FFN(x) = (GELU(x*W1 + b1))*W2 + b2
          * ----------------------------------------------------------- */
-        /* Step 1: ffn_h = inputs*ffn_W1 + / [ffn_b1] \ |
+        /* STEP 1: ffn_h = inputs*ffn_W1 + / [ffn_b1] \ |
                                            |   ...    | | dim_ffn_expanded times
                                            \ [ffn_b1] / |
          * - inputs: nids_input*DIM
@@ -377,8 +377,7 @@ int main() {
             nids_input, dim_ffn_expanded, DIM, 1.0, inputs.data(), DIM, ffn_W1.data(), dim_ffn_expanded,
             1.0, ffn_h.data(), dim_ffn_expanded);
 
-
-        /* Step 2: take (an approximation of) GELU(ffn_h)
+        /* STEP 2: take (an approximation of) GELU(ffn_h)
          * NOTE: derivative of pre-GELU inputs needed for the backward pass */
         constexpr double sqrt_2_over_pi = sqrt(2.0/M_PI);
         constexpr double a              = 0.044715;
@@ -394,9 +393,8 @@ int main() {
             ffn_h_prime[idx] = 0.5*(thp1 + sqrt_2_over_pi_x*(1.0 + 3.0*ax2)*(1.0 - th*th));
         }
 
-
-        /* Step 3: ffn_out = ffn_h*ffn_W2 + / [ffn_b2] \ |
-                                            |   ...    | | DIM
+        /* STEP 3: ffn_out = ffn_h*ffn_W2 + / [ffn_b2] \ |
+                                            |   ...    | | DIM times
                                             \ [ffn_b2] / |
          * - ffn_h:  nids_input*dim_ffn_expanded
          * - ffn_W2: (DIM*FFN_EXPANSION_FACTOR)*DIM = dim_ffn_expanded*DIM
@@ -416,7 +414,6 @@ int main() {
          * -------------------------------------------------------------------- */
         skip_conn_dropout(inputs, ffn_out, udist, gen);
 
-
         /* -------------------
          * Layer normalization
          * -------------------
@@ -427,24 +424,23 @@ int main() {
         layer_norm(inputs, scale_final, shift_final, &sigmas_inv_preLN);
 
 
-        // Build the logits vector for each input token
+        /* -------------
+         * Logits matrix
+         * -------------
+         * logits = inputs*logits_W + / [logits_b] \ |
+         *                            | [logits_b] | | nids_vocab times
+         *                            \ [logits_b] / |
+         * - inputs:   nids_input*DIM
+         * - logits_W: DIM*nids_vocab
+         * - logits:   nids_input*nids_vocab */
         for (auto m = decltype(nids_input){0}; m < nids_input; ++m) {
-            const auto idx_m       = m*DIM;
-            const auto idx_m_vocab = m*nids_vocab;
-
-            for (auto v = decltype(nids_vocab){0}; v < nids_vocab; ++v) {
-                logits.at(idx_m_vocab + v) = logits_b.at(v);
-            }
-
-            for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-                const auto idx_i_vocab = i*nids_vocab;
-                const auto inputs_mi   = inputs.at(idx_m + i);
-
-                for (auto v = decltype(nids_vocab){0}; v < nids_vocab; ++v) {
-                    logits.at(idx_m_vocab + v) += inputs_mi*logits_W.at(idx_i_vocab + v);
-                }
-            }
+            std::copy(logits_b.begin(), logits_b.end(), logits.begin() + m*nids_vocab);
         }
+
+        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+            nids_input, nids_vocab, DIM, 1.0, inputs.data(), DIM, logits_W.data(), nids_vocab,
+            1.0, logits.data(), nids_vocab);
+
 
         // XXX XXX XXX XXX XXX XXX
         // XXX XXX XXX XXX XXX XXX
