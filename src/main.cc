@@ -45,7 +45,7 @@ int main() {
 
 
     /* Initialize a vector representation ("embedding") of each token in the
-     * vocabulary with random numbers to be optimized during training later on */
+     * vocabulary with random numbers to be optimized during training */
     const auto nids_vocab = tokenizer.vocab_token2id.size();
     const auto dim_vocab  = nids_vocab*DIM;
     vector<double> vocab_embedding(dim_vocab);
@@ -69,7 +69,7 @@ int main() {
     }
 
 
-    // Initialize the positional embedding vectors with random numbers
+    // Initialize the positional embedding vectors with random values
     const auto dim_tot = nids_input*DIM;
     vector<double> pos_embeddings(dim_tot);
 
@@ -90,10 +90,7 @@ int main() {
     vector<double>     scale_final(DIM, 1.0),     shift_final(DIM, 0.0);
 
 
-    /* Initialize the query, key, and value weight matrices to random values
-     * NOTE: declared as std::vector so they are allocated on the heap.
-     *       std::array allocates on the stack and this can overflow for very
-     *       large DIM*DIM. */
+    // Initialize the query, key, and value weight matrices to random values
     constexpr auto dim_sq = DIM*DIM;
     vector<double> Wq(dim_sq), Wk(dim_sq), Wv(dim_sq);
 
@@ -102,9 +99,9 @@ int main() {
     uniform_real_distribution<double> xg_dim_udist(-xg_dim_bound, xg_dim_bound);
 
     for (auto idx = decltype(dim_sq){0}; idx < dim_sq; ++idx) {
-        Wq.at(idx) = xg_dim_udist(gen);
-        Wk.at(idx) = xg_dim_udist(gen);
-        Wv.at(idx) = xg_dim_udist(gen);
+        Wq[idx] = xg_dim_udist(gen);
+        Wk[idx] = xg_dim_udist(gen);
+        Wv[idx] = xg_dim_udist(gen);
     }
 
 
@@ -135,8 +132,8 @@ int main() {
     normal_distribution<double> xg_ffn_ndist(0.0, xg_ffn_std);
 
     for (auto idx = decltype(dim_ffn_weights){0}; idx < dim_ffn_weights; ++idx) {
-        ffn_W1.at(idx) = xg_ffn_ndist(gen);
-        ffn_W2.at(idx) = xg_ffn_ndist(gen);
+        ffn_W1[idx] = xg_ffn_ndist(gen);
+        ffn_W2[idx] = xg_ffn_ndist(gen);
     }
 
 
@@ -149,7 +146,7 @@ int main() {
     for (auto v = decltype(nids_vocab){0}; v < nids_vocab; ++v) {
         const auto idx_v = v*DIM;
         for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-            logits_W.at(i*nids_vocab + v) = vocab_embedding.at(idx_v + i);
+            logits_W[i*nids_vocab + v] = vocab_embedding[idx_v + i];
         }
     }
 
@@ -211,6 +208,9 @@ int main() {
     constexpr double sqrt_dim     = sqrt(static_cast<double>(DIM));
     constexpr double sqrt_dim_inv = 1.0/sqrt_dim;
 
+    const double   loss_norm_fac = 1.0/static_cast<double>(nids_input-1);
+    const double params_norm_fac = loss_norm_fac*LEARNING_RATE;
+
     const auto training_start = std::chrono::steady_clock::now();
 
     for (auto it = decltype(NTRAIN){0}; it < NTRAIN; ++it) {
@@ -224,14 +224,14 @@ int main() {
          * (scaled by sqrt(DIM) to keep magnitudes consistent) and add the
          * corresponding positional encoding vectors */
         for (auto m = decltype(nids_input){0}; m < nids_input; ++m) {
-            const auto idx_m = m*DIM;
-            const auto id_input = ids_input.at(m);
+            const auto idx_m    = m*DIM;
+            const auto id_input = ids_input[m];
             assert(id_input < nids_vocab);
             const auto idx_vocab = id_input*DIM;
 
             for (auto i = decltype(DIM){0}; i < DIM; ++i) {
                 const auto mi = idx_m + i;
-                inputs.at(mi) = sqrt_dim*vocab_embedding.at(idx_vocab + i) + pos_embeddings.at(mi);
+                inputs[mi] = sqrt_dim*vocab_embedding[idx_vocab + i] + pos_embeddings[mi];
             }
         }
 
@@ -621,35 +621,32 @@ int main() {
 
 
         // Compute average loss and update the model's parameters
-        auto norm_fac = 1.0/static_cast<double>(nids_input-1);
-        loss     *= norm_fac;
-        norm_fac *= LEARNING_RATE;
-
+        loss *= loss_norm_fac;
         loss_file << it << "\t" << loss << endl;
 
         for (auto r = decltype(dim_ffn_expanded){0}; r < dim_ffn_expanded; ++r) {
-            ffn_b1.at(r) -= norm_fac*d_ffn_b1.at(r);
+            ffn_b1.at(r) -= params_norm_fac*d_ffn_b1.at(r);
         }
 
         for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-            ffn_b2.at(i)      -= norm_fac*d_ffn_b2.at(i);
-            scale_final.at(i) -= norm_fac*d_scale_final.at(i);
-            shift_final.at(i) -= norm_fac*d_shift_final.at(i);
-            scale_ffn.at(i)   -= norm_fac*d_scale_ffn.at(i);
-            shift_ffn.at(i)   -= norm_fac*d_shift_ffn.at(i);
+            ffn_b2.at(i)      -= params_norm_fac*d_ffn_b2.at(i);
+            scale_final.at(i) -= params_norm_fac*d_scale_final.at(i);
+            shift_final.at(i) -= params_norm_fac*d_shift_final.at(i);
+            scale_ffn.at(i)   -= params_norm_fac*d_scale_ffn.at(i);
+            shift_ffn.at(i)   -= params_norm_fac*d_shift_ffn.at(i);
         }
 
         for (auto idx = decltype(dim_ffn_weights){0}; idx < dim_ffn_weights; ++idx) {
-            ffn_W1.at(idx) -= norm_fac*d_ffn_W1.at(idx);
-            ffn_W2.at(idx) -= norm_fac*d_ffn_W2.at(idx);
+            ffn_W1.at(idx) -= params_norm_fac*d_ffn_W1.at(idx);
+            ffn_W2.at(idx) -= params_norm_fac*d_ffn_W2.at(idx);
         }
 
         for (auto v = decltype(nids_vocab){0}; v < nids_vocab; ++v) {
-            logits_b.at(v) -= norm_fac*d_logits_b.at(v);
+            logits_b.at(v) -= params_norm_fac*d_logits_b.at(v);
         }
 
         for (auto idx = decltype(dim_vocab){0}; idx < dim_vocab; ++idx) {
-            logits_W.at(idx) -= norm_fac*d_logits_W.at(idx);
+            logits_W.at(idx) -= params_norm_fac*d_logits_W.at(idx);
         }
 
         // TODO: update all the other weights in the model
