@@ -44,9 +44,9 @@ int main() {
 
     /* Initialize a vector representation ("embedding") of each token in the
      * vocabulary with random numbers to be optimized during training */
-    const auto nids_vocab = tokenizer.vocab_token2id.size();
-    const auto dim_vocab  = nids_vocab*DIM;
-    std::vector<double> vocab_embedding(dim_vocab);
+    const auto nv    = tokenizer.vocab_token2id.size();
+    const auto nvdim = nv*DIM;
+    std::vector<double> vocab_embedding(nvdim);
 
     std::mt19937 gen;
 
@@ -132,14 +132,14 @@ int main() {
 
     /* Initialize the logits weights to the vocabulary embedding and the biases
      * to zero
-     * NOTE: think of 'logits_W' as a (DIM, nids_vocab)-shaped matrix */
-    std::vector<double> logits_W(dim_vocab);
-    std::vector<double> logits_b(nids_vocab, 0.0);
+     * NOTE: think of 'logits_W' as a (DIM, nv)-shaped matrix */
+    std::vector<double> logits_W(nvdim);
+    std::vector<double> logits_b(nv, 0.0);
 
-    for (auto v = decltype(nids_vocab){0}; v < nids_vocab; ++v) {
+    for (auto v = decltype(nv){0}; v < nv; ++v) {
         const auto idx_v = v*DIM;
         for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-            logits_W[i*nids_vocab + v] = vocab_embedding[idx_v + i];
+            logits_W[i*nv + v] = vocab_embedding[idx_v + i];
         }
     }
 
@@ -163,7 +163,7 @@ int main() {
     std::vector<double> ffn_out(nxdim);
 
     // Preallocate the logits vectors
-    std::vector<double> logits(nx*nids_vocab);
+    std::vector<double> logits(nx*nv);
 
     // Preallocate the loss' gradients wrt to the model's parameters
     std::vector<double> d_ffn_b1(dim_ffn_expanded);
@@ -178,11 +178,11 @@ int main() {
     std::vector<double> d_scale2(DIM);
     std::vector<double> d_shift2(DIM);
 
-    std::vector<double> d_logits_W(dim_vocab);  // Matrix (DIM, nids_vocab)
-    std::vector<double> d_logits_b(nids_vocab);
+    std::vector<double> d_logits_W(nvdim);  // Matrix (DIM, nv)
+    std::vector<double> d_logits_b(nv);
 
     // Preallocate some helpers to improve performance
-    std::vector<double> probs_m(nids_vocab);
+    std::vector<double> probs_m(nv);
     std::vector<double> x_preLN_normalized_m(DIM);
     std::vector<double> sigmas_inv_preLN(nx);
     std::vector<double> dx_m(DIM);
@@ -227,7 +227,7 @@ int main() {
         for (auto m = decltype(nx){0}; m < nx; ++m) {
             const auto idx_m    = m*DIM;
             const auto id_input = ids_input[m];
-            assert(id_input < nids_vocab);
+            assert(id_input < nv);
             const auto idx_vocab = id_input*DIM;
 
             for (auto i = decltype(DIM){0}; i < DIM; ++i) {
@@ -434,18 +434,18 @@ int main() {
          * Logits matrix
          * -------------
          * logits = x*logits_W + / [logits_b] \ |
-         *                       | [logits_b] | | nids_vocab times
+         *                       | [logits_b] | | nv times
          *                       \ [logits_b] / |
          * - x:        nx*DIM
-         * - logits_W: DIM*nids_vocab
-         * - logits:   nx*nids_vocab */
+         * - logits_W: DIM*nv
+         * - logits:   nx*nv */
         for (auto m = decltype(nx){0}; m < nx; ++m) {
-            std::copy(logits_b.begin(), logits_b.end(), logits.begin() + m*nids_vocab);
+            std::copy(logits_b.begin(), logits_b.end(), logits.begin() + m*nv);
         }
 
         cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
-            nx, nids_vocab, DIM, 1.0, x.data(), DIM, logits_W.data(), nids_vocab,
-            1.0, logits.data(), nids_vocab);
+            nx, nv, DIM, 1.0, x.data(), DIM, logits_W.data(), nv,
+            1.0, logits.data(), nv);
 
 
         // XXX XXX XXX XXX XXX XXX
@@ -491,13 +491,13 @@ int main() {
 
         for (auto m = decltype(nx){0}; m < nx - 1; ++m) {
             const auto idx_m       = m*DIM;
-            const auto idx_m_vocab = m*nids_vocab;
+            const auto idx_m_vocab = m*nv;
             const auto idx_m_exp   = m*dim_ffn_expanded;
 
             // Find the largest logit for the current input token
             double logits_m_max = -std::numeric_limits<double>::infinity();
 
-            for (auto v = decltype(nids_vocab){0}; v < nids_vocab; ++v) {
+            for (auto v = decltype(nv){0}; v < nv; ++v) {
                 const auto logits_mv = logits[idx_m_vocab + v];
                 if (logits_mv > logits_m_max) {
                     logits_m_max = logits_mv;
@@ -508,7 +508,7 @@ int main() {
              * the logits for the current input token */
             double sum_exp_m = 0.0;
 
-            for (auto v = decltype(nids_vocab){0}; v < nids_vocab; ++v) {
+            for (auto v = decltype(nv){0}; v < nv; ++v) {
                 const auto exp_term = std::exp(logits[idx_m_vocab + v] - logits_m_max);
                 probs_m[v] = exp_term;  // NOTE: not yet normalized by sum_exp_m
                 sum_exp_m += exp_term;
@@ -539,7 +539,7 @@ int main() {
              * and biases and wrt the final inputs */
             fill(dx_m.begin(), dx_m.end(), 0.0);
 
-            for (auto v = decltype(nids_vocab){0}; v < nids_vocab; ++v) {
+            for (auto v = decltype(nv){0}; v < nv; ++v) {
                 auto probs_mv = probs_m[v];
                 probs_mv     /= sum_exp_m;
 
@@ -550,7 +550,7 @@ int main() {
                 d_logits_b[v] += probs_mv;
 
                 for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-                    const auto iv = i*nids_vocab + v;
+                    const auto iv = i*nv + v;
                     d_logits_W[iv] += probs_mv*x[idx_m + i];
                     dx_m[i]        += probs_mv*logits_W[iv];
                 }
@@ -647,11 +647,11 @@ int main() {
             ffn_W2[idx] -= params_norm_fac*d_ffn_W2[idx];
         }
 
-        for (auto v = decltype(nids_vocab){0}; v < nids_vocab; ++v) {
+        for (auto v = decltype(nv){0}; v < nv; ++v) {
             logits_b[v] -= params_norm_fac*d_logits_b[v];
         }
 
-        for (auto idx = decltype(dim_vocab){0}; idx < dim_vocab; ++idx) {
+        for (auto idx = decltype(nvdim){0}; idx < nvdim; ++idx) {
             logits_W[idx] -= params_norm_fac*d_logits_W[idx];
         }
 
@@ -663,9 +663,9 @@ int main() {
 
         // XXX
         // Predict the next token
-        //const auto last_token_idx = nx*nids_vocab - nids_vocab;  // (nx-1)*nids_vocab
-        //std::vector<double> last_logits(nids_vocab);
-        //for (auto v = decltype(nids_vocab){0}; v < nids_vocab; ++v) {
+        //const auto last_token_idx = nx*nv - nv;  // (nx-1)*nv
+        //std::vector<double> last_logits(nv);
+        //for (auto v = decltype(nv){0}; v < nv; ++v) {
         //    last_logits[v] = logits[last_token_idx + v];
         //}
         //const auto new_id    = distance(last_logits.begin(), max_element(last_logits.begin(), last_logits.end()));
