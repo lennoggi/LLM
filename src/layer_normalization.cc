@@ -17,7 +17,7 @@ void layer_norm(      std::vector<double> &vecs,
                 const std::vector<double> &shift,
                       std::vector<double> *sigmas_inv) {
     /* Specifying 'long int' explicitly here so that the compiler knows it has
-     * to pick std::div(long int a, long int b) (std::div_t is overloaded)      */
+     * to pick std::div(long int a, long int b) (std::div_t is overloaded) */
     const long int ntot     = vecs.size();
     const long int vec_size = scale.size();
 
@@ -42,19 +42,19 @@ void layer_norm(      std::vector<double> &vecs,
 
         /* Welford's algorithm to compute the mean and variance of a
          * sample in one pass and without a potential catastrophic
-         * cancellation when computing the variance                     */
+         * cancellation when computing the variance */
         for (auto i = decltype(vec_size){0}; i < vec_size; ++i) {
             const auto mi     = idx_m + i;
-            const auto delta1 = vecs.at(mi) - mean;
+            const auto delta1 = vecs[mi] - mean;
                        mean  += delta1/static_cast<double>(i+1);
-            const auto delta2 = vecs.at(mi) - mean;
+            const auto delta2 = vecs[mi] - mean;
                    sum_diffs += delta1*delta2;
         }
 
         assert(sum_diffs >= 0.0);
 
         /* NOTE: sum_diffs==0 can only happen if all elements in
-         *       vecs.at(mi) are the same, which is very unlikely     */
+         *       vecs[mi] are the same, which is very unlikely */
         assert(sum_diffs >= 0.0);
         constexpr auto sigma_inv_fallback = 1.0/sqrt(static_cast<double>(VAR_TINY));
         const     auto sigma_inv          = (sum_diffs == 0.0) ? sigma_inv_fallback : sqrt(static_cast<double>(vec_size-1)/sum_diffs);
@@ -62,7 +62,7 @@ void layer_norm(      std::vector<double> &vecs,
 
         for (auto i = decltype(vec_size){0}; i < vec_size; ++i) {
             const auto mi = idx_m + i;
-            vecs.at(mi) = scale.at(i)*(sigma_inv*(vecs.at(mi) - mean)) + shift.at(i);
+            vecs[mi] = scale[i]*(sigma_inv*(vecs[mi] - mean)) + shift[i];
         }
 
 

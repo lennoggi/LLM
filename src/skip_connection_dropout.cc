@@ -27,13 +27,13 @@ void skip_conn_dropout(std::vector<double> &vec,
         if constexpr (DROPOUT_PROB > 0.0) {
             const auto x = udist(gen);
             if (x < DROPOUT_PROB) {
-                dropout_vec.at(idx) = 0.0;
+                dropout_vec[idx] = 0.0;
             } else {
-                dropout_vec.at(idx) *= dropout_scale;
+                dropout_vec[idx] *= dropout_scale;
             }
         }
 
-        vec.at(idx) += dropout_vec.at(idx);
+        vec[idx] += dropout_vec[idx];
     }
 
     return;

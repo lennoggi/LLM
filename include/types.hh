@@ -16,7 +16,7 @@ class word_tokenizer_t {
 
     public:
         /* Token-to-ID and ID-to-token vocabularies, i.e., hash maps relating
-         * unique tokens from a training text to integer IDs and vice versa     */
+         * unique tokens from a training text to integer IDs and vice versa */
         std::unordered_map<std::string, size_t> vocab_token2id;  // Fast (O(1)) for token lookup in word_tokenizer_t::encode()
         std::unordered_map<size_t, std::string> vocab_id2token;  // Fast (O(1)) for ID    lookup in word_tokenizer_t::decode()
 
@@ -44,7 +44,7 @@ class bpe_tokenizer_t {
 
     public:
         /* Token-to-ID and ID-to-token vocabularies, i.e., hash maps relating
-         * unique tokens from a training text to integer IDs and vice versa     */
+         * unique tokens from a training text to integer IDs and vice versa */
         std::unordered_map<std::string, size_t> vocab_token2id;
         std::unordered_map<size_t, std::string> vocab_id2token;
 

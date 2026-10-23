@@ -18,4 +18,4 @@ static_assert(TOLERANCE > 0.0 and TOLERANCE < 1.0);  // Should be positive, but 
 //static_assert(CONTEXT_SIZE > 0);
 static_assert(VERBOSE or not VERBOSE);
 
-#endif
+#endif  // CHECK_PARAMETERS_HH

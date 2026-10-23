@@ -23,12 +23,12 @@ word_tokenizer_t::word_tokenizer_t(const std::string &training_text) {
 
     while (tokens_it != end) {
         /* Make all tokens lowercase to avoid duplicating them if they occur
-         * multiple times with different cases                                  */
+         * multiple times with different cases */
         auto token = tokens_it->str();
         transform(token.begin(), token.end(), token.begin(), //std::tolower);
                   /* Wrap std::tolower in a lambda to cast the input into
                    * unsigned char to avoid undefined behavior if the input
-                   * char is signed and negative (non-ASCII byte)           */
+                   * char is signed and negative (non-ASCII byte) */
                   [](unsigned char c)->char {
                       return static_cast<char>(std::tolower(c));
                   }
@@ -37,7 +37,7 @@ word_tokenizer_t::word_tokenizer_t(const std::string &training_text) {
         /* Try inserting the token into the token-to-ID vocabulary (O(1) for
          * token lookup in tokenizer_t::encode()); this will only succeed if the
          * token is not in the vocabulary yet, since the tokens are the keys in
-         * the map and keys are unique                                          */
+         * the map and keys are unique */
         if ((this->vocab_token2id).emplace(token, id).second) {
             ++id;
         } else {
@@ -52,7 +52,7 @@ word_tokenizer_t::word_tokenizer_t(const std::string &training_text) {
 
 
     /* Add extra IDs to handle unknown and end-of-text (useful when training
-     * with multiple text sources) tokens                                       */
+     * with multiple text sources) tokens */
     const auto original_vocab_size = (this->vocab_token2id).size();
     (this->unk) = {"<|unknown|>",     original_vocab_size};
     (this->eot) = {"<|end-of-text|>", original_vocab_size + 1};
@@ -67,7 +67,7 @@ word_tokenizer_t::word_tokenizer_t(const std::string &training_text) {
 
 
     /* Build the ID-to-token vocabulary for fast (O(1)) ID lookup in
-     * tokenizer_t::decode()                                                      */
+     * tokenizer_t::decode() */
     (this->vocab_id2token).reserve((this->vocab_token2id).size());
 
     for (const auto &[token, id] : (this->vocab_token2id)) {
@@ -99,25 +99,25 @@ std::vector<size_t> word_tokenizer_t::encode(const std::string &text) {
 
     for (std::sregex_token_iterator it(text.begin(), text.end(), token_re); it != end; ++it, ++m) {
         /* Make all tokens lowercase to avoid duplicating them if the same
-         * word appears multiple times with different cases                 */
+         * word appears multiple times with different cases */
         auto token = it->str();
         transform(token.begin(), token.end(), token.begin(), //::tolower);
                   /* Wrap ::tolower in a lambda to cast the input into
                    * unsigned char to avoid undefined behavior if the input
-                   * char is signed and negative (non-ASCII byte)           */
+                   * char is signed and negative (non-ASCII byte) */
                   [](unsigned char c)->char {
                       return static_cast<char>(std::tolower(c));
                   }
                  );
 
         /* Convert the token into the ID if found in the vocabulary, otherwise
-         * set the ID to 'unknown'                                              */
+         * set the ID to 'unknown' */
         try {
             /* NOTE: the at() method on the RHS throws an exception if the token
-             *       is not in the token-to-ID vocabulary                       */
-            tokenIDs.at(m) = (this->vocab_token2id).at(token);
+             *       is not in the token-to-ID vocabulary */
+            tokenIDs[m] = (this->vocab_token2id).at(token);
         } catch (const std::exception &e) {
-            tokenIDs.at(m) = (this->unk).second;
+            tokenIDs[m] = (this->unk).second;
             std::cerr << "Unknown token '" << token << "': setting ID to 'unknown' token ID "
                       << (this->unk).second << " (exception: \"" << e.what() << "\")" << std::endl;
         }
