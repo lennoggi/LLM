@@ -490,7 +490,7 @@ int main() {
             double logits_m_max = -std::numeric_limits<double>::infinity();
 
             for (auto v = decltype(nids_vocab){0}; v < nids_vocab; ++v) {
-                const auto logits_mv = logits.at(idx_m_vocab + v);
+                const auto logits_mv = logits[idx_m_vocab + v];
                 if (logits_mv > logits_m_max) {
                     logits_m_max = logits_mv;
                 }
@@ -501,9 +501,9 @@ int main() {
             double sum_exp_m = 0.0;
 
             for (auto v = decltype(nids_vocab){0}; v < nids_vocab; ++v) {
-                const auto exp_term = std::exp(logits.at(idx_m_vocab + v) - logits_m_max);
-                probs_m.at(v) = exp_term;  // NOTE: not yet normalized by sum_exp_m
-                sum_exp_m    += exp_term;
+                const auto exp_term = std::exp(logits[idx_m_vocab + v] - logits_m_max);
+                probs_m[v] = exp_term;  // NOTE: not yet normalized by sum_exp_m
+                sum_exp_m += exp_term;
             }
 
             assert(sum_exp_m > 0.0);
@@ -511,7 +511,7 @@ int main() {
 
             /* Add the loss term for the current input token
              * NOTE: letting
-             *   z[m][v+1] = logits.at(idx_m_vocab + ids_input.at(m+1))
+             *   z[m][v+1] = logits[idx_m_vocab + ids_input[m+1])
              *   be the logit corresponding to the next input token, the
              *   expression below is equivalent to
              *
@@ -521,8 +521,8 @@ int main() {
              *
              *  which implicitly applies softmax normalization to each logit to
              *  convert it into a probability */
-            const auto next_input_id = ids_input.at(m+1);
-            loss += -(logits.at(idx_m_vocab + next_input_id) - logits_m_max) + log_sum_exp_m;
+            const auto next_input_id = ids_input[m+1];
+            loss += -(logits[idx_m_vocab + next_input_id] - logits_m_max) + log_sum_exp_m;
 
 
             /* Normalize the softmax probabilities for each logit in the logits
@@ -532,19 +532,19 @@ int main() {
             fill(d_inputs_m.begin(), d_inputs_m.end(), 0.0);
 
             for (auto v = decltype(nids_vocab){0}; v < nids_vocab; ++v) {
-                auto probs_mv = probs_m.at(v);
+                auto probs_mv = probs_m[v];
                 probs_mv     /= sum_exp_m;
 
                 if (v == next_input_id) {
                     probs_mv -= 1.0;
                 }
 
-                d_logits_b.at(v) += probs_mv;
+                d_logits_b[v] += probs_mv;
 
                 for (auto i = decltype(DIM){0}; i < DIM; ++i) {
                     const auto iv = i*nids_vocab + v;
-                    d_logits_W.at(iv) += probs_mv*inputs.at(idx_m + i);
-                    d_inputs_m.at(i)  += probs_mv*logits_W.at(iv);
+                    d_logits_W[iv] += probs_mv*inputs[idx_m + i];
+                    d_inputs_m[i]  += probs_mv*logits_W[iv];
                 }
             }
 
@@ -558,18 +558,18 @@ int main() {
             auto dinputs_scalefinal_inputspreLN_m_sum = 0.0;
 
             for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-                const auto d_inputs_mi   = d_inputs_m.at(i);
-                const auto scale_final_i = scale_final.at(i);
+                const auto d_inputs_mi   = d_inputs_m[i];
+                const auto scale_final_i = scale_final[i];
 
                 const auto input_preLN_normalized_mi = (scale_final_i > TOLERANCE) ?
-                    (inputs.at(idx_m + i) - shift_final.at(i))/scale_final_i : 0.0;
-                inputs_preLN_normalized_m.at(i) = input_preLN_normalized_mi;
+                    (inputs[idx_m + i] - shift_final[i])/scale_final_i : 0.0;
+                inputs_preLN_normalized_m[i] = input_preLN_normalized_mi;
 
-                d_shift_final.at(i) += d_inputs_mi;
-                d_scale_final.at(i) += d_inputs_mi*input_preLN_normalized_mi;
+                d_shift_final[i] += d_inputs_mi;
+                d_scale_final[i] += d_inputs_mi*input_preLN_normalized_mi;
 
                 const auto dinputs_scalefinal_mi      = d_inputs_mi*scale_final_i;
-                dinputs_scalefinal_m.at(i)            = dinputs_scalefinal_mi;
+                dinputs_scalefinal_m[i]               = dinputs_scalefinal_mi;
                 dinputs_scalefinal_m_sum             += dinputs_scalefinal_mi;
                 dinputs_scalefinal_inputspreLN_m_sum += dinputs_scalefinal_mi*input_preLN_normalized_mi;
             }
@@ -577,28 +577,28 @@ int main() {
 
             /* Build the loss gradients wrt to the FFN weights and biases and
              * the pre-FFN layer normalization scale and shift */
-            const auto sigma_inv_preLN_m = sigmas_inv_preLN.at(m);
+            const auto sigma_inv_preLN_m = sigmas_inv_preLN[m];
 
             for (auto i = decltype(DIM){0}; i < DIM; ++i) {
                 const auto idx_i_exp = i*dim_ffn_expanded;
 
-                const auto d_ffn_b2_mi = (dinputs_scalefinal_m.at(i)
-                    - (dinputs_scalefinal_m_sum + dinputs_scalefinal_inputspreLN_m_sum*inputs_preLN_normalized_m.at(i))/static_cast<double>(DIM)
+                const auto d_ffn_b2_mi = (dinputs_scalefinal_m[i]
+                    - (dinputs_scalefinal_m_sum + dinputs_scalefinal_inputspreLN_m_sum*inputs_preLN_normalized_m[i])/static_cast<double>(DIM)
                     )*sigma_inv_preLN_m;
 
-                d_ffn_b2_m.at(i) = d_ffn_b2_mi;
-                d_ffn_b2.at(i)  += d_ffn_b2_mi;
+                d_ffn_b2_m[i] = d_ffn_b2_mi;
+                d_ffn_b2[i]  += d_ffn_b2_mi;
 
                 for (auto r = decltype(dim_ffn_expanded){0}; r < dim_ffn_expanded; ++r) {
-                    d_ffn_W2.at(r*DIM + i) += d_ffn_b2_mi*ffn_h.at(idx_m_exp + r);
+                    d_ffn_W2[r*DIM + i] += d_ffn_b2_mi*ffn_h[idx_m_exp + r];
                 }
 
-                const auto scale_ffn_i = scale_ffn.at(i);
+                const auto scale_ffn_i = scale_ffn[i];
                 const auto inputs_preFFN_normalized_mi = (scale_ffn_i > TOLERANCE) ?
-                    (inputs_preFFN.at(idx_m + i) - shift_ffn.at(i))/scale_ffn_i : 0.0;
+                    (inputs_preFFN[idx_m + i] - shift_ffn[i])/scale_ffn_i : 0.0;
 
-                d_shift_ffn.at(i) += d_ffn_b2_mi;
-                d_scale_ffn.at(i) += d_ffn_b2_mi*inputs_preFFN_normalized_mi;
+                d_shift_ffn[i] += d_ffn_b2_mi;
+                d_scale_ffn[i] += d_ffn_b2_mi*inputs_preFFN_normalized_mi;
             }
 
             for (auto r = decltype(dim_ffn_expanded){0}; r < dim_ffn_expanded; ++r) {
@@ -606,13 +606,13 @@ int main() {
                 double d_ffn_b1_r = 0.0;
 
                 for (auto j = decltype(DIM){0}; j < DIM; ++j) {
-                    d_ffn_b1_r += d_ffn_b2_m.at(j)*ffn_W2.at(idx_r + j)*ffn_h_prime.at(idx_m_exp + r);
+                    d_ffn_b1_r += d_ffn_b2_m[j]*ffn_W2[idx_r + j]*ffn_h_prime[idx_m_exp + r];
                 }
 
-                d_ffn_b1.at(r) += d_ffn_b1_r;
+                d_ffn_b1[r] += d_ffn_b1_r;
 
                 for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-                    d_ffn_W1.at(i*dim_ffn_expanded + r) += d_ffn_b1_r*inputs_preFFN.at(idx_m + i);
+                    d_ffn_W1[i*dim_ffn_expanded + r] += d_ffn_b1_r*inputs_preFFN[idx_m + i];
                 }
             }
         }
@@ -623,28 +623,28 @@ int main() {
         loss_file << it << "\t" << loss << std::endl;
 
         for (auto r = decltype(dim_ffn_expanded){0}; r < dim_ffn_expanded; ++r) {
-            ffn_b1.at(r) -= params_norm_fac*d_ffn_b1.at(r);
+            ffn_b1[r] -= params_norm_fac*d_ffn_b1[r];
         }
 
         for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-            ffn_b2.at(i)      -= params_norm_fac*d_ffn_b2.at(i);
-            scale_final.at(i) -= params_norm_fac*d_scale_final.at(i);
-            shift_final.at(i) -= params_norm_fac*d_shift_final.at(i);
-            scale_ffn.at(i)   -= params_norm_fac*d_scale_ffn.at(i);
-            shift_ffn.at(i)   -= params_norm_fac*d_shift_ffn.at(i);
+            ffn_b2[i]      -= params_norm_fac*d_ffn_b2[i];
+            scale_final[i] -= params_norm_fac*d_scale_final[i];
+            shift_final[i] -= params_norm_fac*d_shift_final[i];
+            scale_ffn[i]   -= params_norm_fac*d_scale_ffn[i];
+            shift_ffn[i]   -= params_norm_fac*d_shift_ffn[i];
         }
 
         for (auto idx = decltype(dim_ffn_weights){0}; idx < dim_ffn_weights; ++idx) {
-            ffn_W1.at(idx) -= params_norm_fac*d_ffn_W1.at(idx);
-            ffn_W2.at(idx) -= params_norm_fac*d_ffn_W2.at(idx);
+            ffn_W1[idx] -= params_norm_fac*d_ffn_W1[idx];
+            ffn_W2[idx] -= params_norm_fac*d_ffn_W2[idx];
         }
 
         for (auto v = decltype(nids_vocab){0}; v < nids_vocab; ++v) {
-            logits_b.at(v) -= params_norm_fac*d_logits_b.at(v);
+            logits_b[v] -= params_norm_fac*d_logits_b[v];
         }
 
         for (auto idx = decltype(dim_vocab){0}; idx < dim_vocab; ++idx) {
-            logits_W.at(idx) -= params_norm_fac*d_logits_W.at(idx);
+            logits_W[idx] -= params_norm_fac*d_logits_W[idx];
         }
 
         // TODO: update all the other weights in the model
@@ -658,7 +658,7 @@ int main() {
         //const auto last_token_idx = nids_input*nids_vocab - nids_vocab;  // (nids_input-1)*nids_vocab
         //std::vector<double> last_logits(nids_vocab);
         //for (auto v = decltype(nids_vocab){0}; v < nids_vocab; ++v) {
-        //    last_logits.at(v) = logits.at(last_token_idx + v);
+        //    last_logits[v] = logits[last_token_idx + v];
         //}
         //const auto new_id    = distance(last_logits.begin(), max_element(last_logits.begin(), last_logits.end()));
         //const auto new_token = tokenizer.decode(std::vector<size_t>{new_id});
@@ -700,14 +700,14 @@ int main() {
     //    std::vector<array<size_t, CONTEXT_SIZE + 1>> ios(n_io);
 
     //    for (auto n = decltype(n_io){0}; n < n_io; ++n) {
-    //        auto &io = ios.at(n);
-    //        output = tokens.at(n + CONTEXT_SIZE);
+    //        auto &io = ios[n];
+    //        output = tokens[n + CONTEXT_SIZE];
 
     //        for (auto i = decltype(CONTEXT_SIZE){0}; i < CONTEXT_SIZE; ++i) {
-    //            io.at(i) = tokens.at(n + i);
+    //            io[i] = tokens[n + i];
     //        }
 
-    //        io.at(CONTEXT_SIZE) = 
+    //        io[CONTEXT_SIZE] = 
     //    }
 
     //    // XXX
