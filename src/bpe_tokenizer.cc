@@ -11,26 +11,24 @@
 #include "types.hh"
 #include "parameters.hh"
 
-using namespace std;
-
 
 /* =================================================================
  * Constructor building the token-to-ID and ID-to-token vocabularies
  * ================================================================= */
-bpe_tokenizer_t::bpe_tokenizer_t(const string &training_text,
-                                 const string &eow,
-                                 const size_t &max_vocab_size) {
+bpe_tokenizer_t::bpe_tokenizer_t(const std::string &training_text,
+                                 const std::string &eow,
+                                 const size_t      &max_vocab_size) {
     /* -------------------------------------------------------------------
      * 1. Build a list of all the words in the training text as vectors of
      *    individual characters
      * -------------------------------------------------------------------      */
     /* This regex matches words, numbers, and punctuation as individual tokens,
      * which should be regarded as lists of "symbols"                           */
-    regex                 word_re(R"([a-zA-Z0-9]+|[.,;:!?'"()\[\]\{\}\/\\])");
-    sregex_token_iterator words_it(training_text.begin(), training_text.end(), word_re);
-    sregex_token_iterator end;
+    std::regex word_re(R"([a-zA-Z0-9]+|[.,;:!?'"()\[\]\{\}\/\\])");
+    std::sregex_token_iterator words_it(training_text.begin(), training_text.end(), word_re);
+    std::sregex_token_iterator end;
 
-    vector<vector<string>> words_list;
+    std::vector<std::vector<std::string>> words_list;
 
     while (words_it != end) {
         /* Make all words lowercase to avoid duplicating them if they occur
@@ -49,7 +47,7 @@ bpe_tokenizer_t::bpe_tokenizer_t(const string &training_text,
          * characters, then these will be iteratively replaced with strings of
          * multiple characters)                                                 */
         const auto word_size = word.size();
-        vector<string> word_strvec(word_size);
+        std::vector<std::string> word_strvec(word_size);
 
         for (auto i = decltype(word_size){0}; i < word_size; ++i) {
             word_strvec.at(i) = word.at(i);
@@ -76,7 +74,7 @@ bpe_tokenizer_t::bpe_tokenizer_t(const string &training_text,
         for (const auto &token : word_strvec) {
             // Sanity check
             if (token == eow) {
-                throw runtime_error("bpe_tokenizer_t(): found end-of-word character token in the training text. This is not supported: please change the end-of-word character to something not present in the training text.");
+                throw std::runtime_error("bpe_tokenizer_t(): found end-of-word character token in the training text. This is not supported: please change the end-of-word character to something not present in the training text.");
             }
 
             /* Try inserting the token into the token-to-ID vocabulary (O(1) for
@@ -87,20 +85,20 @@ bpe_tokenizer_t::bpe_tokenizer_t(const string &training_text,
                 ++id;
             } else {
                 if constexpr (VERBOSE) {
-                    cout << "Skipping repeated token '" << token
-                         << "' while creating the token-to-ID vocabulary" << endl;
+                    std::cout << "Skipping repeated token '" << token
+                              << "' while creating the token-to-ID vocabulary" << std::endl;
                 }
             }
         }
     }
 
     if ((this->vocab_token2id).size() > max_vocab_size) {
-        ostringstream error_ss;
+        std::ostringstream error_ss;
         error_ss << "bpe_tokenizer_t(): initial vocabulary size (" << (this->vocab_token2id).size()
                  << ") larger than maximum allowed vocabulary size (" << max_vocab_size
                  << "). Please increase the maximum allowed vocabulary size to at least "
                  << (this->vocab_token2id).size() << ".";
-        throw runtime_error(error_ss.str());
+        throw std::runtime_error(error_ss.str());
     }
 
 
@@ -117,15 +115,15 @@ bpe_tokenizer_t::bpe_tokenizer_t(const string &training_text,
     const auto nwords = words_list.size();
 
     if (nwords < 1) {
-        throw runtime_error("bpe_tokenizer_t(): need at least one word in the text");
+        throw std::runtime_error("bpe_tokenizer_t(): need at least one word in the text");
     }
 
     while ((this->vocab_token2id).size() < max_vocab_size) {
-        unordered_map<string, size_t> symbolpairs_freq;
+        std::unordered_map<std::string, size_t> symbolpairs_freq;
 
         for (const auto &word_strvec : words_list) {
             for (auto i = decltype(word_strvec.size()){0}; i < word_strvec.size()-1; ++i) {
-                const string symbol_pair = word_strvec.at(i) + word_strvec.at(i+1);
+                const std::string symbol_pair = word_strvec.at(i) + word_strvec.at(i+1);
 
                 /* Try adding 'symbol_pair' to 'symbolpairs_freq' with an
                  * initial frequency of 1; if that fails, that means the symbol
@@ -133,37 +131,37 @@ bpe_tokenizer_t::bpe_tokenizer_t(const string &training_text,
                 if (not symbolpairs_freq.emplace(symbol_pair, 1).second) {
                     try {
                         symbolpairs_freq.at(symbol_pair) += 1;
-                    } catch (const exception &e) {
-                        ostringstream exception_ss;
+                    } catch (const std::exception &e) {
+                        std::ostringstream exception_ss;
                         exception_ss << "bpe_tokenizer_t(): failed to access the symbol-pair->frequency map at key '" << symbol_pair <<
                             "'. This key should exist, please check the code (exception: \"" << e.what() << "\").";
-                        throw runtime_error(exception_ss.str());
+                        throw std::runtime_error(exception_ss.str());
                     }
                 }
             }
         }
 
-        const auto iterator_maxcounts = max_element(symbolpairs_freq.begin(), symbolpairs_freq.end(),
-                                                    [](const auto &a, const auto &b){
-                                                        return (a.second < b.second);
-                                                    });
+        const auto iterator_maxcounts = std::max_element(symbolpairs_freq.begin(), symbolpairs_freq.end(),
+                                                         [](const auto &a, const auto &b){
+                                                            return (a.second < b.second);
+                                                        });
         const auto &most_common_symbolpair      = iterator_maxcounts->first;
         const auto &most_common_symbolpair_freq = iterator_maxcounts->second;
 
         assert(most_common_symbolpair_freq > 0);
 
         if (most_common_symbolpair_freq == 1) {
-            cerr << "********** WARNING **********" << endl
-                 << "Merging symbols stopped at vocabulary size " << (this->vocab_token2id).size()
-                 << " (maximum allowed vocabulary size: " << max_vocab_size
-                 << ") because no other merges are possible" << endl
-                 << "*****************************" << endl;
+            std::cerr << "********** WARNING **********" << std::endl
+                      << "Merging symbols stopped at vocabulary size " << (this->vocab_token2id).size()
+                      << " (maximum allowed vocabulary size: " << max_vocab_size
+                      << ") because no other merges are possible" << std::endl
+                      << "*****************************" << std::endl;
             break;
         } else {
             // Update the words list for the next iteration
             for (auto &word_strvec : words_list) {
                 for (auto i = decltype(word_strvec.size()){0}; i < word_strvec.size()-1; ++i) {
-                    const string symbol_pair = word_strvec.at(i) + word_strvec.at(i+1);
+                    const std::string symbol_pair = word_strvec.at(i) + word_strvec.at(i+1);
                     if (symbol_pair == most_common_symbolpair) {
                         word_strvec.at(i)   = most_common_symbolpair;
                         word_strvec.at(i+1) = "";
@@ -185,8 +183,8 @@ bpe_tokenizer_t::bpe_tokenizer_t(const string &training_text,
             ++id;
         } else {
             if constexpr (VERBOSE) {
-                cout << "Skipping repeated token '" << most_common_symbolpair 
-                     << "' while creating the token-to-ID vocabulary" << endl;
+                std::cout << "Skipping repeated token '" << most_common_symbolpair 
+                          << "' while creating the token-to-ID vocabulary" << std::endl;
             }
         }
     }
@@ -202,11 +200,11 @@ bpe_tokenizer_t::bpe_tokenizer_t(const string &training_text,
     (this->eot) = {"<|end-of-text|>", original_vocab_size + 1};
 
     if (not (this->vocab_token2id).emplace(this->unk).second) {
-        throw runtime_error("bpe_tokenizer_t(): insertion of 'unknown' token failed");
+        throw std::runtime_error("bpe_tokenizer_t(): insertion of 'unknown' token failed");
     }
 
     if (not (this->vocab_token2id).emplace(this->eot).second) {
-        throw runtime_error("bpe_tokenizer_t(): insertion of 'end-of-text' token failed");
+        throw std::runtime_error("bpe_tokenizer_t(): insertion of 'end-of-text' token failed");
     }
 
     /* Build the ID-to-token vocabulary for fast (O(1)) ID lookup in
@@ -215,11 +213,11 @@ bpe_tokenizer_t::bpe_tokenizer_t(const string &training_text,
 
     for (const auto &[token, id] : (this->vocab_token2id)) {
         if (not (this->vocab_id2token).emplace(id, token).second) {
-            ostringstream exception_ss;
+            std::ostringstream exception_ss;
             exception_ss << "bpe_tokenizer_t(): unexpected repetition of element [" << id << ", " << token
                          << "] in the ID-to-token vocabulary. This may happen if ID " << id
                          << " is not unique in the token-to-ID vocabulary.";
-            throw runtime_error(exception_ss.str());
+            throw std::runtime_error(exception_ss.str());
         }
     }
 
@@ -233,18 +231,18 @@ bpe_tokenizer_t::bpe_tokenizer_t(const string &training_text,
  * Encode method using the token-to-ID vocabulary to convert an input text into
  * the corresponding set of token IDs
  * ============================================================================ */
-vector<size_t> bpe_tokenizer_t::encode(const string &text) {
+std::vector<size_t> bpe_tokenizer_t::encode(const std::string &text) {
     /* ---------------------------------------------------------------------
      * 1. Build a list of all the words in the text as vectors of individual
      *    characters
      * ---------------------------------------------------------------------    */
     /* This regex matches words, numbers, and punctuation as individual tokens,
      * which should be regarded as lists of "symbols"                           */
-    regex                 word_re(R"([a-zA-Z0-9]+|[.,;:!?'"()\[\]\{\}\/\\])");
-    sregex_token_iterator words_it(text.begin(), text.end(), word_re);
-    sregex_token_iterator end;
+    std::regex word_re(R"([a-zA-Z0-9]+|[.,;:!?'"()\[\]\{\}\/\\])");
+    std::sregex_token_iterator words_it(text.begin(), text.end(), word_re);
+    std::sregex_token_iterator end;
 
-    vector<vector<string>> words_list;
+    std::vector<std::vector<std::string>> words_list;
 
     while (words_it != end) {
         /* Make all words lowercase to avoid duplicating them if they occur
@@ -263,7 +261,7 @@ vector<size_t> bpe_tokenizer_t::encode(const string &text) {
          * characters, then these will be iteratively replaced with strings of
          * multiple characters)                                                 */
         const auto word_size = word.size();
-        vector<string> word_strvec(word_size);
+        std::vector<std::string> word_strvec(word_size);
 
         for (auto i = decltype(word_size){0}; i < word_size; ++i) {
             word_strvec.at(i) = word.at(i);
@@ -295,8 +293,8 @@ vector<size_t> bpe_tokenizer_t::encode(const string &text) {
     const auto nwords = words_list.size();
     
     if (nwords < 1) {
-        throw runtime_error("bpe_tokenizer_t::encode(): need at least one word in the text");
-        return vector<size_t>();  // Not reached
+        throw std::runtime_error("bpe_tokenizer_t::encode(): need at least one word in the text");
+        return std::vector<size_t>();  // Not reached
     }
 
     for (auto &word_strvec : words_list) {
@@ -304,18 +302,18 @@ vector<size_t> bpe_tokenizer_t::encode(const string &text) {
 
         while (symbol_merges_possible) {
             auto   i_symbolpair_replace = word_strvec.size();  // Invalid (too large) index within the word
-            string   symbolpair_replace = "";
+            std::string   symbolpair_replace = "";
 
             for (auto i = decltype(word_strvec.size()){0}; i < word_strvec.size() - 1; ++i) {
-                const string symbol_pair = word_strvec.at(i) + word_strvec.at(i+1);
+                const std::string symbol_pair = word_strvec.at(i) + word_strvec.at(i+1);
                 try {
                     const auto id_symbol_pair = (this->vocab_token2id).at(symbol_pair);  // Throws an exception if 'symbol_pair' is not found in the token-to-ID vocabulary
                     i_symbolpair_replace = i;
                       symbolpair_replace = symbol_pair;
-                } catch (const exception &e) {
+                } catch (const std::exception &e) {
                     if constexpr (VERBOSE) {
-                        cout << "Skipping unknown symbol pair '" << symbol_pair
-                             << "' while encoding the text (exception: \"" << e.what() << "\")" << endl;
+                        std::cout << "Skipping unknown symbol pair '" << symbol_pair
+                                  << "' while encoding the text (exception: \"" << e.what() << "\")" << std::endl;
                     }
                 }
             }
@@ -327,7 +325,7 @@ vector<size_t> bpe_tokenizer_t::encode(const string &text) {
             } else {
                 symbol_merges_possible = false;
                 if constexpr (VERBOSE) {
-                    cout << "No tokens found for this word in the token-to-ID vocabulary (this may just mean all tokens from the vocabulary have been merged into compound tokens)" << endl;
+                    std::cout << "No tokens found for this word in the token-to-ID vocabulary (this may just mean all tokens from the vocabulary have been merged into compound tokens)" << std::endl;
                 }
             }
         }
@@ -343,14 +341,14 @@ vector<size_t> bpe_tokenizer_t::encode(const string &text) {
         for (const auto &token : word_strvec) {
             // Sanity check
             if (token == (this->eow)) {
-                throw runtime_error("bpe_tokenizer_t::encode(): found end-of-word character token in the input text. This is not supported: please change the end-of-word character to something not present in the training text.");
-                return vector<size_t>();  // Not reached
+                throw std::runtime_error("bpe_tokenizer_t::encode(): found end-of-word character token in the input text. This is not supported: please change the end-of-word character to something not present in the training text.");
+                return std::vector<size_t>();  // Not reached
             }
             ++ntokens;
         }
     }
 
-    vector<size_t> tokenIDs(ntokens);
+    std::vector<size_t> tokenIDs(ntokens);
     size_t m = 0;
 
     for (const auto &word_strvec : words_list) {
@@ -361,10 +359,10 @@ vector<size_t> bpe_tokenizer_t::encode(const string &text) {
                 /* NOTE: the at() method on the RHS throws an exception if the
                  *       token is not in the token-to-ID vocabulary             */
                 tokenIDs.at(m) = (this->vocab_token2id).at(token);
-            } catch (const exception &e) {
+            } catch (const std::exception &e) {
                 tokenIDs.at(m) = (this->unk).second;
-                cerr << "Unknown token '" << token << "': setting ID to 'unknown' token ID "
-                     << (this->unk).second << " (exception: \"" << e.what() << "\")" << endl;
+                std::cerr << "Unknown token '" << token << "': setting ID to 'unknown' token ID "
+                          << (this->unk).second << " (exception: \"" << e.what() << "\")" << std::endl;
             }
 
             ++m;
@@ -380,20 +378,20 @@ vector<size_t> bpe_tokenizer_t::encode(const string &text) {
  * Decode method using the ID-to-token vocabulary to convert a set of input
  * token IDs into the corresponding text tokens
  * ========================================================================= */
-string bpe_tokenizer_t::decode(const vector<size_t> &ids) {
-    ostringstream decoded_text_ss;
+std::string bpe_tokenizer_t::decode(const std::vector<size_t> &ids) {
+    std::ostringstream decoded_text_ss;
 
     for (const auto &id : ids) {
         try {
             // NOTE: no extra space separating tokens
             decoded_text_ss << (this->vocab_id2token).at(id);
-        } catch (const exception &e) {
-            ostringstream exception_ss;
+        } catch (const std::exception &e) {
+            std::ostringstream exception_ss;
             exception_ss << "bpe_tokenizer_t::decode(): unknown token ID " << id
                          << ": this should never happen because the 'unknown' token should be part of the dictionary. Please check the code's correctness (exception: \""
                          << e.what() << "\")";
-            throw runtime_error(exception_ss.str());
-            return string();  // Not reached
+            throw std::runtime_error(exception_ss.str());
+            return std::string();  // Not reached
         }
     }
 

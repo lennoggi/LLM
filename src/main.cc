@@ -18,8 +18,6 @@
 
 #include "parameters.hh"
 
-using namespace std;
-
 
 int main() {
     const auto training_text = file_to_string(TRAINING_FILE);
@@ -39,7 +37,7 @@ int main() {
     const auto nids_input = ids_input.size();
 
     if (nids_input < 2) {
-        throw runtime_error("Need at least two input tokens for the cross-entropy loss calculation to be meaningful and successful");
+        throw std::runtime_error("Need at least two input tokens for the cross-entropy loss calculation to be meaningful and successful");
         return 1;  // Not reached
     }
 
@@ -48,21 +46,21 @@ int main() {
      * vocabulary with random numbers to be optimized during training */
     const auto nids_vocab = tokenizer.vocab_token2id.size();
     const auto dim_vocab  = nids_vocab*DIM;
-    vector<double> vocab_embedding(dim_vocab);
+    std::vector<double> vocab_embedding(dim_vocab);
 
-    mt19937 gen;
+    std::mt19937 gen;
 
     if constexpr (RANDOM_SEED >= 0) {
-        cout << "INFO: seed " << RANDOM_SEED
-             << " will be used to initialize the pseudo-random number generator. The LLM output will be reproducible." << endl;
+        std::cout << "INFO: seed " << RANDOM_SEED
+                  << " will be used to initialize the pseudo-random number generator. The LLM output will be reproducible." << std::endl;
         gen.seed(static_cast<std::mt19937::result_type>(RANDOM_SEED));
     } else {
-        cout << "INFO: machine entropy will be used to initialize the pseudo-random number generator. The LLM output will NOT be reproducible." << endl;
-        random_device rd;
+        std::cout << "INFO: machine entropy will be used to initialize the pseudo-random number generator. The LLM output will NOT be reproducible." << std::endl;
+        std::random_device rd;
         gen.seed(rd());
     }
 
-    normal_distribution<double> ndist(0.0, 1.0/sqrt(static_cast<double>(DIM)));
+    std::normal_distribution<double> ndist(0.0, 1.0/std::sqrt(static_cast<double>(DIM)));
 
     for (auto &el : vocab_embedding) {
         el = ndist(gen);
@@ -71,7 +69,7 @@ int main() {
 
     // Initialize the positional embedding vectors with random values
     const auto dim_tot = nids_input*DIM;
-    vector<double> pos_embeddings(dim_tot);
+    std::vector<double> pos_embeddings(dim_tot);
 
     for (auto &el : pos_embeddings) {
         el = ndist(gen);
@@ -85,18 +83,18 @@ int main() {
      *         1. Before the attention block
      *         2. Before the feed-forward neural network
      *         3. Before predicting the new token */
-    vector<double> scale_attention(DIM, 1.0), shift_attention(DIM, 0.0);
-    vector<double>       scale_ffn(DIM, 1.0),       shift_ffn(DIM, 0.0);
-    vector<double>     scale_final(DIM, 1.0),     shift_final(DIM, 0.0);
+    std::vector<double> scale_attention(DIM, 1.0), shift_attention(DIM, 0.0);
+    std::vector<double>       scale_ffn(DIM, 1.0),       shift_ffn(DIM, 0.0);
+    std::vector<double>     scale_final(DIM, 1.0),     shift_final(DIM, 0.0);
 
 
     // Initialize the query, key, and value weight matrices to random values
     constexpr auto dim_sq = DIM*DIM;
-    vector<double> Wq(dim_sq), Wk(dim_sq), Wv(dim_sq);
+    std::vector<double> Wq(dim_sq), Wk(dim_sq), Wv(dim_sq);
 
     // Xavier/Glorot uniform distribution
-    constexpr auto xg_dim_bound = sqrt(3.0/(static_cast<double>(DIM)));
-    uniform_real_distribution<double> xg_dim_udist(-xg_dim_bound, xg_dim_bound);
+    constexpr auto xg_dim_bound = std::sqrt(3.0/(static_cast<double>(DIM)));
+    std::uniform_real_distribution<double> xg_dim_udist(-xg_dim_bound, xg_dim_bound);
 
     for (auto idx = decltype(dim_sq){0}; idx < dim_sq; ++idx) {
         Wq[idx] = xg_dim_udist(gen);
@@ -107,12 +105,12 @@ int main() {
 
     /* Initialize a uniform real distribution in [0,1] for the dropout (only
      * used if needed */
-    uniform_real_distribution<double> udist(0.0, 1.0);
+    std::uniform_real_distribution<double> udist(0.0, 1.0);
 
     if constexpr (DROPOUT_PROB > 0.0) {
-        cout << "INFO: dropout enabled with rate " << DROPOUT_PROB << endl;
+        std::cout << "INFO: dropout enabled with rate " << DROPOUT_PROB << std::endl;
     } else {
-        cout << "INFO: dropout disabled" << endl;
+        std::cout << "INFO: dropout disabled" << std::endl;
     }
 
 
@@ -124,12 +122,12 @@ int main() {
     constexpr auto dim_ffn_expanded = DIM*FFN_EXPANSION_FACTOR;
     constexpr auto dim_ffn_weights  = DIM*dim_ffn_expanded;
 
-    vector<double> ffn_W1(dim_ffn_weights),       ffn_W2(dim_ffn_weights);
-    vector<double> ffn_b1(dim_ffn_expanded, 0.0), ffn_b2(DIM, 0.0);
+    std::vector<double> ffn_W1(dim_ffn_weights),       ffn_W2(dim_ffn_weights);
+    std::vector<double> ffn_b1(dim_ffn_expanded, 0.0), ffn_b2(DIM, 0.0);
 
     // Xavier/Glorot normal distribution
-    constexpr auto xg_ffn_std = sqrt(6.0/(static_cast<double>(DIM) + static_cast<double>(dim_ffn_expanded)));
-    normal_distribution<double> xg_ffn_ndist(0.0, xg_ffn_std);
+    constexpr auto xg_ffn_std = std::sqrt(6.0/(static_cast<double>(DIM) + static_cast<double>(dim_ffn_expanded)));
+    std::normal_distribution<double> xg_ffn_ndist(0.0, xg_ffn_std);
 
     for (auto idx = decltype(dim_ffn_weights){0}; idx < dim_ffn_weights; ++idx) {
         ffn_W1[idx] = xg_ffn_ndist(gen);
@@ -140,8 +138,8 @@ int main() {
     /* Initialize the logits weights to the vocabulary embedding and the biases
      * to zero
      * NOTE: think of 'logits_W' as a (DIM, nids_vocab)-shaped matrix */
-    vector<double> logits_W(dim_vocab);
-    vector<double> logits_b(nids_vocab, 0.0);
+    std::vector<double> logits_W(dim_vocab);
+    std::vector<double> logits_b(nids_vocab, 0.0);
 
     for (auto v = decltype(nids_vocab){0}; v < nids_vocab; ++v) {
         const auto idx_v = v*DIM;
@@ -155,57 +153,57 @@ int main() {
      * attention and context matrices, the FFN hidden and output layers, the
      * logits vectors, the loss' gradients wrt to the model's parameters, and
      * some helpers to improve performance */
-    vector<double> inputs(dim_tot), inputs_preFFN(dim_tot);
-    vector<double> queries(dim_tot), keys(dim_tot), values(dim_tot);
-    vector<double> attention(nids_input*nids_input);
-    vector<double> context(dim_tot);
+    std::vector<double> inputs(dim_tot), inputs_preFFN(dim_tot);
+    std::vector<double> queries(dim_tot), keys(dim_tot), values(dim_tot);
+    std::vector<double> attention(nids_input*nids_input);
+    std::vector<double> context(dim_tot);
 
     const auto dim_tot_expanded = nids_input*dim_ffn_expanded;
-    vector<double> ffn_h(dim_tot_expanded), ffn_h_prime(dim_tot_expanded);
-    vector<double> ffn_out(dim_tot);
+    std::vector<double> ffn_h(dim_tot_expanded), ffn_h_prime(dim_tot_expanded);
+    std::vector<double> ffn_out(dim_tot);
 
-    vector<double> logits(nids_input*nids_vocab);
+    std::vector<double> logits(nids_input*nids_vocab);
 
-    vector<double> probs_m(nids_vocab);
-    vector<double> inputs_preLN_normalized_m(DIM);
-    vector<double> sigmas_inv_preLN(nids_input);
-    vector<double> d_inputs_m(DIM);
-    vector<double> dinputs_scalefinal_m(DIM);
-    vector<double> d_ffn_b2_m(DIM);
+    std::vector<double> probs_m(nids_vocab);
+    std::vector<double> inputs_preLN_normalized_m(DIM);
+    std::vector<double> sigmas_inv_preLN(nids_input);
+    std::vector<double> d_inputs_m(DIM);
+    std::vector<double> dinputs_scalefinal_m(DIM);
+    std::vector<double> d_ffn_b2_m(DIM);
 
-    vector<double> d_ffn_b1(dim_ffn_expanded);
-    vector<double> d_ffn_W1(dim_ffn_weights);  // Matrix (DIM, dim_ffn_expanded)
+    std::vector<double> d_ffn_b1(dim_ffn_expanded);
+    std::vector<double> d_ffn_W1(dim_ffn_weights);  // Matrix (DIM, dim_ffn_expanded)
 
-    vector<double> d_ffn_b2(DIM);
-    vector<double> d_ffn_W2(dim_ffn_weights);  // Matrix (dim_ffn_expanded, DIM)
+    std::vector<double> d_ffn_b2(DIM);
+    std::vector<double> d_ffn_W2(dim_ffn_weights);  // Matrix (dim_ffn_expanded, DIM)
 
-    vector<double> d_scale_final(DIM);
-    vector<double> d_shift_final(DIM);
+    std::vector<double> d_scale_final(DIM);
+    std::vector<double> d_shift_final(DIM);
 
-    vector<double> d_scale_ffn(DIM);
-    vector<double> d_shift_ffn(DIM);
+    std::vector<double> d_scale_ffn(DIM);
+    std::vector<double> d_shift_ffn(DIM);
 
-    vector<double> d_logits_W(dim_vocab);  // Matrix (DIM, nids_vocab)
-    vector<double> d_logits_b(nids_vocab);
+    std::vector<double> d_logits_W(dim_vocab);  // Matrix (DIM, nids_vocab)
+    std::vector<double> d_logits_b(nids_vocab);
 
 
     /* Write the loss function to file at every training iteration for logging
      * purposes */
-    ofstream loss_file(LOSS_FILE);
+    std::ofstream loss_file(LOSS_FILE);
 
     if (not loss_file.is_open()) {
-        throw runtime_error("Failed to write to file 'Loss.asc'");
+        throw std::runtime_error("Failed to write to file 'Loss.asc'");
         return 1;  // Not reached
     }
 
-    loss_file << "# Column 1: training iteration" << endl
-              << "# Column 2: loss function averaged over all input tokens" << endl;
+    loss_file << "# Column 1: training iteration" << std::endl
+              << "# Column 2: loss function averaged over all input tokens" << std::endl;
 
 
     /* ========
      * Training
      * ======== */
-    constexpr double sqrt_dim     = sqrt(static_cast<double>(DIM));
+    constexpr double sqrt_dim     = std::sqrt(static_cast<double>(DIM));
     constexpr double sqrt_dim_inv = 1.0/sqrt_dim;
 
     const double   loss_norm_fac = 1.0/static_cast<double>(nids_input-1);
@@ -295,7 +293,7 @@ int main() {
          *   max value */
         for (auto m = decltype(nids_input){0}; m < nids_input; ++m) {
             double *row    = &attention[m*nids_input];
-            double row_max = -numeric_limits<double>::infinity();
+            double row_max = -std::numeric_limits<double>::infinity();
 
             for (auto n = decltype(nids_input){0}; n <= m; ++n) {
                 if (row[n] > row_max) {
@@ -303,16 +301,16 @@ int main() {
                 }
             }
 
-            // XXX: remove assertion
-            assert(isfinite(row_max));
+            // XXX: remove assertion for performance
+            assert(std::isfinite(row_max));
             double sum_exp = 0.0; 
 
             for (auto n = decltype(nids_input){0}; n <= m; ++n) {
-                row[n]   = exp(row[n] - row_max);
+                row[n]   = std::exp(row[n] - row_max);
                 sum_exp += row[n];
             }
 
-            // XXX: remove assertion
+            // XXX: remove assertion for performance
             assert(sum_exp > 0.0);
             const double inv_sum_exp = 1.0/sum_exp;
 
@@ -379,7 +377,7 @@ int main() {
 
         /* STEP 2: take (an approximation of) GELU(ffn_h)
          * NOTE: derivative of pre-GELU inputs needed for the backward pass */
-        constexpr double sqrt_2_over_pi = sqrt(2.0/M_PI);
+        constexpr double sqrt_2_over_pi = std::sqrt(2.0/M_PI);
         constexpr double a              = 0.044715;
 
         for (auto idx = decltype(dim_tot_expanded){0}; idx < dim_tot_expanded; ++idx) {
@@ -489,7 +487,7 @@ int main() {
             const auto idx_m_exp   = m*dim_ffn_expanded;
 
             // Find the largest logit for the current input token
-            double logits_m_max = -numeric_limits<double>::infinity();
+            double logits_m_max = -std::numeric_limits<double>::infinity();
 
             for (auto v = decltype(nids_vocab){0}; v < nids_vocab; ++v) {
                 const auto logits_mv = logits.at(idx_m_vocab + v);
@@ -503,7 +501,7 @@ int main() {
             double sum_exp_m = 0.0;
 
             for (auto v = decltype(nids_vocab){0}; v < nids_vocab; ++v) {
-                const auto exp_term = exp(logits.at(idx_m_vocab + v) - logits_m_max);
+                const auto exp_term = std::exp(logits.at(idx_m_vocab + v) - logits_m_max);
                 probs_m.at(v) = exp_term;  // NOTE: not yet normalized by sum_exp_m
                 sum_exp_m    += exp_term;
             }
@@ -622,7 +620,7 @@ int main() {
 
         // Compute average loss and update the model's parameters
         loss *= loss_norm_fac;
-        loss_file << it << "\t" << loss << endl;
+        loss_file << it << "\t" << loss << std::endl;
 
         for (auto r = decltype(dim_ffn_expanded){0}; r < dim_ffn_expanded; ++r) {
             ffn_b1.at(r) -= params_norm_fac*d_ffn_b1.at(r);
@@ -652,19 +650,19 @@ int main() {
         // TODO: update all the other weights in the model
 
         if constexpr (VERBOSE) {
-            cout << "Training epoch " << it << " completed" << endl;
+            std::cout << "Training epoch " << it << " completed" << std::endl;
         }
 
         // XXX
         // Predict the next token
         //const auto last_token_idx = nids_input*nids_vocab - nids_vocab;  // (nids_input-1)*nids_vocab
-        //vector<double> last_logits(nids_vocab);
+        //std::vector<double> last_logits(nids_vocab);
         //for (auto v = decltype(nids_vocab){0}; v < nids_vocab; ++v) {
         //    last_logits.at(v) = logits.at(last_token_idx + v);
         //}
         //const auto new_id    = distance(last_logits.begin(), max_element(last_logits.begin(), last_logits.end()));
-        //const auto new_token = tokenizer.decode(vector<size_t>{new_id});
-        //cout << input_text << " " << new_token << endl;
+        //const auto new_token = tokenizer.decode(std::vector<size_t>{new_id});
+        //std::cout << input_text << " " << new_token << std::endl;
         // XXX
     }
 
@@ -672,7 +670,7 @@ int main() {
     const auto training_stop = std::chrono::steady_clock::now();
     const std::chrono::duration<double> training_time_s = training_stop - training_start;
 
-    cout << "INFO: all done. Training took " << training_time_s.count() << " s." << endl;
+    std::cout << "INFO: all done. Training took " << training_time_s.count() << " s." << std::endl;
 
 
 
@@ -680,12 +678,12 @@ int main() {
     // XXX XXX XXX XXX XXX XXX
     // XXX XXX XXX XXX XXX XXX
     //for (const auto &token : tokens) {
-    //    cout << token << " ";
-    //} cout << endl;
+    //    std::cout << token << " ";
+    //} std::cout << std::endl;
 
-    //cout << endl << "***** Decoded text *****" << endl;
+    //std::cout << std::endl << "***** Decoded text *****" << std::endl;
     //const auto &input_text_decoded = tokenizer.decode(tokens);
-    //cout << input_text_decoded << endl;
+    //std::cout << input_text_decoded << std::endl;
     // XXX XXX XXX XXX XXX XXX
     // XXX XXX XXX XXX XXX XXX
     // XXX XXX XXX XXX XXX XXX
@@ -693,13 +691,13 @@ int main() {
 
     // TODO: generate input-output token ID pairs (input must have size CONTEXT_SIZE)
     //if (CONTEXT_SIZE >= nids) {
-    //    cerr << "Context size (" << CONTEXT_SIZE << ") must be smaller than the number of tokens in the training text (" << nids << ")" << endl;
+    //    std::cerr << "Context size (" << CONTEXT_SIZE << ") must be smaller than the number of tokens in the training text (" << nids << ")" << std::endl;
     //    return 1;
     //} else {
     //    const auto n_io = nids - CONTEXT_SIZE + 1;
     //    assert(n_io > 0);
 
-    //    vector<array<size_t, CONTEXT_SIZE + 1>> ios(n_io);
+    //    std::vector<array<size_t, CONTEXT_SIZE + 1>> ios(n_io);
 
     //    for (auto n = decltype(n_io){0}; n < n_io; ++n) {
     //        auto &io = ios.at(n);
@@ -715,9 +713,9 @@ int main() {
     //    // XXX
     //    //for (const auto &[input, output] : ios) {
     //    //    for (const auto &token : input) {
-    //    //        cout << token << " ";
+    //    //        std::cout << token << " ";
     //    //    }
-    //    //    cout << "\t" << output << endl;
+    //    //    std::cout << "\t" << output << std::endl;
     //    //}
     //    // XXX
     //}

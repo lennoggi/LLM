@@ -9,17 +9,15 @@
 #include "types.hh"
 #include "parameters.hh"
 
-using namespace std;
-
 
 /* =================================================================
  * Constructor building the token-ti-ID and ID-to-token vocabularies
  * ================================================================= */
-word_tokenizer_t::word_tokenizer_t(const string &training_text) {
+word_tokenizer_t::word_tokenizer_t(const std::string &training_text) {
     // This regex matches words, numbers, and punctuation as individual tokens
-    regex                 token_re(R"([a-zA-Z0-9]+|[.,;:!?'"()\[\]\{\}\/\\])");
-    sregex_token_iterator tokens_it(training_text.begin(), training_text.end(), token_re);
-    sregex_token_iterator end;
+    std::regex                 token_re(R"([a-zA-Z0-9]+|[.,;:!?'"()\[\]\{\}\/\\])");
+    std::sregex_token_iterator tokens_it(training_text.begin(), training_text.end(), token_re);
+    std::sregex_token_iterator end;
 
     size_t id = 0;
 
@@ -44,8 +42,8 @@ word_tokenizer_t::word_tokenizer_t(const string &training_text) {
             ++id;
         } else {
             if constexpr (VERBOSE) {
-                cout << "Skipping repeated token '" << token
-                     << "' while creating the token-to-ID vocabulary" << endl;
+                std::cout << "Skipping repeated token '" << token
+                          << "' while creating the token-to-ID vocabulary" << std::endl;
             }
         }
 
@@ -60,11 +58,11 @@ word_tokenizer_t::word_tokenizer_t(const string &training_text) {
     (this->eot) = {"<|end-of-text|>", original_vocab_size + 1};
 
     if (not (this->vocab_token2id).emplace(this->unk).second) {
-        throw runtime_error("word_tokenizer_t(): insertion of 'unknown' token failed");
+        throw std::runtime_error("word_tokenizer_t(): insertion of 'unknown' token failed");
     }
 
     if (not (this->vocab_token2id).emplace(this->eot).second) {
-        throw runtime_error("word_tokenizer_t(): insertion of 'end-of-text' token failed");
+        throw std::runtime_error("word_tokenizer_t(): insertion of 'end-of-text' token failed");
     }
 
 
@@ -74,11 +72,11 @@ word_tokenizer_t::word_tokenizer_t(const string &training_text) {
 
     for (const auto &[token, id] : (this->vocab_token2id)) {
         if (not (this->vocab_id2token).emplace(id, token).second) {
-            ostringstream exception_ss;
+            std::ostringstream exception_ss;
             exception_ss << "word_tokenizer_t(): unexpected repetition of element [" << id << ", " << token
                          << "] in the ID-to-token vocabulary. This may happen if ID " << id
                          << " is not unique in the token-to-ID vocabulary.";
-            throw runtime_error(exception_ss.str());
+            throw std::runtime_error(exception_ss.str());
         }
     }
 }
@@ -89,17 +87,17 @@ word_tokenizer_t::word_tokenizer_t(const string &training_text) {
  * Encode method using the token-to-ID vocabulary to convert an input text into
  * the corresponding set of token IDs
  * ============================================================================ */
-vector<size_t> word_tokenizer_t::encode(const string &text) {
+std::vector<size_t> word_tokenizer_t::encode(const std::string &text) {
     // This regex matches words, numbers, and punctuation as individual tokens
-    regex                 token_re(R"([a-zA-Z0-9]+|[.,;:!?'"()\[\]\{\}\/\\])");
-    sregex_token_iterator tokens_it(text.begin(), text.end(), token_re);
-    sregex_token_iterator end;
+    std::regex                 token_re(R"([a-zA-Z0-9]+|[.,;:!?'"()\[\]\{\}\/\\])");
+    std::sregex_token_iterator tokens_it(text.begin(), text.end(), token_re);
+    std::sregex_token_iterator end;
 
     const auto nmatches = static_cast<size_t>(distance(tokens_it, end));
-    vector<size_t> tokenIDs(nmatches);
+    std::vector<size_t> tokenIDs(nmatches);
     size_t m = 0;
 
-    for (sregex_token_iterator it(text.begin(), text.end(), token_re); it != end; ++it, ++m) {
+    for (std::sregex_token_iterator it(text.begin(), text.end(), token_re); it != end; ++it, ++m) {
         /* Make all tokens lowercase to avoid duplicating them if the same
          * word appears multiple times with different cases                 */
         auto token = it->str();
@@ -118,10 +116,10 @@ vector<size_t> word_tokenizer_t::encode(const string &text) {
             /* NOTE: the at() method on the RHS throws an exception if the token
              *       is not in the token-to-ID vocabulary                       */
             tokenIDs.at(m) = (this->vocab_token2id).at(token);
-        } catch (const exception &e) {
+        } catch (const std::exception &e) {
             tokenIDs.at(m) = (this->unk).second;
-            cerr << "Unknown token '" << token << "': setting ID to 'unknown' token ID "
-                 << (this->unk).second << " (exception: \"" << e.what() << "\")" << endl;
+            std::cerr << "Unknown token '" << token << "': setting ID to 'unknown' token ID "
+                      << (this->unk).second << " (exception: \"" << e.what() << "\")" << std::endl;
         }
     }
 
@@ -134,20 +132,20 @@ vector<size_t> word_tokenizer_t::encode(const string &text) {
  * Decode method using the ID-to-token vocabulary to convert a set of input
  * token IDs into the corresponding text tokens
  * ========================================================================= */
-string word_tokenizer_t::decode(const vector<size_t> &ids) {
-    ostringstream decoded_text_ss;
+std::string word_tokenizer_t::decode(const std::vector<size_t> &ids) {
+    std::ostringstream decoded_text_ss;
 
     for (const auto &id : ids) {
         try {
             // NOTE: extra space to separate tokens
             decoded_text_ss << (this->vocab_id2token).at(id) << " ";
-        } catch (const exception &e) {
-            ostringstream exception_ss;
+        } catch (const std::exception &e) {
+            std::ostringstream exception_ss;
             exception_ss << "word_tokenizer_t::decode(): unknown token ID " << id
                          << ": this should never happen because the 'unknown' token should be part of the dictionary. Please check the code's correctness (exception: \""
                          << e.what() << "\")";
-            throw runtime_error(exception_ss.str());
-            return string();  // Not reached
+            throw std::runtime_error(exception_ss.str());
+            return std::string();  // Not reached
         }
     }
 

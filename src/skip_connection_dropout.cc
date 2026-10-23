@@ -5,21 +5,19 @@
 #include "declare_functions.hh"
 #include "parameters.hh"
 
-using namespace std;
-
 
 /* ========================================================================
  * Routine applying dropout to the second input vector and adding it to the
  * first one
  * ======================================================================== */
-void skip_conn_dropout(vector<double> &vec,
-                       vector<double> &dropout_vec,
-                       uniform_real_distribution<double> &udist,
-                       mt19937 &gen) {
+void skip_conn_dropout(std::vector<double> &vec,
+                       std::vector<double> &dropout_vec,
+                       std::uniform_real_distribution<double> &udist,
+                       std::mt19937 &gen) {
     const auto dim = vec.size();
 
     if (dropout_vec.size() != dim) {
-        throw runtime_error("skip_conn_dropout(): the sizes of the two vectors must match");
+        throw std::runtime_error("skip_conn_dropout(): the sizes of the two vectors must match");
         return;  // Not reached
     }
 

@@ -6,25 +6,23 @@
 #include "declare_functions.hh"
 #include "parameters.hh"
 
-using namespace std;
-
 
 /* =========================================================================
  * Routine normalizing the components of each vector in a list of vectors so
  * that these components average out to 0 and their variance is 1. Then, the
  * vector components are scaled and shifted.
  * ========================================================================= */
-void layer_norm(      vector<double> &vecs,
-                const vector<double> &scale,
-                const vector<double> &shift,
-                      vector<double> *sigmas_inv) {
+void layer_norm(      std::vector<double> &vecs,
+                const std::vector<double> &scale,
+                const std::vector<double> &shift,
+                      std::vector<double> *sigmas_inv) {
     /* Specifying 'long int' explicitly here so that the compiler knows it has
      * to pick std::div(long int a, long int b) (std::div_t is overloaded)      */
     const long int ntot     = vecs.size();
     const long int vec_size = scale.size();
 
     if (shift.size() != vec_size) {
-        throw runtime_error("layer_normalization(): shift.size() must equal scale.size(), which in turn must equal the size of each of the input vectors");
+        throw std::runtime_error("layer_normalization(): shift.size() must equal scale.size(), which in turn must equal the size of each of the input vectors");
         return;  // Not reached
     }
 
@@ -32,7 +30,7 @@ void layer_norm(      vector<double> &vecs,
     const auto nvecs     = nvecs_rem.quot;
 
     if (nvecs_rem.rem != 0) {
-        throw runtime_error("layer_normalization(): inconsistent vector size leads to non-integer number of input vectors");
+        throw std::runtime_error("layer_normalization(): inconsistent vector size leads to non-integer number of input vectors");
         return;  // Not reached
     }
 
