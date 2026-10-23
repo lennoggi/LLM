@@ -51,11 +51,10 @@ void layer_norm(      std::vector<double> &vecs,
                    sum_diffs += delta1*delta2;
         }
 
-        assert(sum_diffs >= 0.0);
-
         /* NOTE: sum_diffs==0 can only happen if all elements in
          *       vecs[mi] are the same, which is very unlikely */
         assert(sum_diffs >= 0.0);
+
         constexpr auto sigma_inv_fallback = 1.0/sqrt(static_cast<double>(VAR_TINY));
         const     auto sigma_inv          = (sum_diffs == 0.0) ? sigma_inv_fallback : sqrt(static_cast<double>(vec_size-1)/sum_diffs);
         assert(sigma_inv > 0.0);
