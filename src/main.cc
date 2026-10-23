@@ -76,16 +76,11 @@ int main() {
     }
 
 
-    /* Initialize the layer normalization scale and shift vectors to 1's and
-     * and 0's, respectively
-     * NOTE: one set of scale/shift vectors per application of the layer
-     *       normalization:
-     *         1. Before the attention block
-     *         2. Before the feed-forward neural network
-     *         3. Before predicting the new token */
-    std::vector<double> scale_attention(DIM, 1.0), shift_attention(DIM, 0.0);
-    std::vector<double>       scale_ffn(DIM, 1.0),       shift_ffn(DIM, 0.0);
-    std::vector<double>     scale_final(DIM, 1.0),     shift_final(DIM, 0.0);
+    /* Initialize the three layer normalization (LN) scale and shift vectors to
+     * 1's and 0's, respectively. The three LN steps are: */
+    std::vector<double> scale1(DIM, 1.0), shift1(DIM, 0.0);  // LN before the attention block
+    std::vector<double> scale2(DIM, 1.0), shift2(DIM, 0.0);  // LN before the feed-forward neural network (FFN)
+    std::vector<double> scale3(DIM, 1.0), shift3(DIM, 0.0);  // LN before predicting the new token
 
 
     // Initialize the query, key, and value weight matrices to random values
@@ -168,7 +163,7 @@ int main() {
     std::vector<double> inputs_preLN_normalized_m(DIM);
     std::vector<double> sigmas_inv_preLN(nids_input);
     std::vector<double> d_inputs_m(DIM);
-    std::vector<double> dinputs_scalefinal_m(DIM);
+    std::vector<double> dinputs_scale3_m(DIM);
     std::vector<double> d_ffn_b2_m(DIM);
 
     std::vector<double> d_ffn_b1(dim_ffn_expanded);
@@ -177,11 +172,11 @@ int main() {
     std::vector<double> d_ffn_b2(DIM);
     std::vector<double> d_ffn_W2(dim_ffn_weights);  // Matrix (dim_ffn_expanded, DIM)
 
-    std::vector<double> d_scale_final(DIM);
-    std::vector<double> d_shift_final(DIM);
+    std::vector<double> d_scale3(DIM);
+    std::vector<double> d_shift3(DIM);
 
-    std::vector<double> d_scale_ffn(DIM);
-    std::vector<double> d_shift_ffn(DIM);
+    std::vector<double> d_scale2(DIM);
+    std::vector<double> d_shift2(DIM);
 
     std::vector<double> d_logits_W(dim_vocab);  // Matrix (DIM, nids_vocab)
     std::vector<double> d_logits_b(nids_vocab);
@@ -237,13 +232,13 @@ int main() {
         // TODO: dropout of 'inputs' without any skip connections
 
 
-        /* -------------------
-         * Layer normalization
-         * -------------------
+        /* ----------------------
+         * Layer normalization #1
+         * ----------------------
          * Rescale the each input embedding vector so that its components
          * average out to 0 and have variance 1, but then scale and shift them
          * by trainable parameters, to make training more stable */
-        layer_norm(inputs, scale_attention, shift_attention);
+        layer_norm(inputs, scale1, shift1);
 
         /* ------------------------------
          * Query, key, and value matrices
@@ -349,11 +344,11 @@ int main() {
          *    the backward step */
         skip_conn_dropout(inputs, context, udist, gen);
 
-        /* -------------------
-         * Layer normalization
-         * -------------------
+        /* ----------------------
+         * Layer normalization #2
+         * ----------------------
          * NOTE: save inputs at this stage for the backward pass */
-        layer_norm(inputs, scale_ffn, shift_ffn);
+        layer_norm(inputs, scale2, shift2);
         inputs_preFFN = inputs;
 
 
@@ -412,14 +407,14 @@ int main() {
          * -------------------------------------------------------------------- */
         skip_conn_dropout(inputs, ffn_out, udist, gen);
 
-        /* -------------------
-         * Layer normalization
-         * -------------------
+        /* ----------------------
+         * Layer normalization #3
+         * ----------------------
          * NOTE: save the inverse standard deviations for each input token for
          *   the backward step. The pre-layer-norm inputs will also be needed
          *   but they will be reconstructed as they are too many to be stored
          *   while cheap to recalculate. */
-        layer_norm(inputs, scale_final, shift_final, &sigmas_inv_preLN);
+        layer_norm(inputs, scale3, shift3, &sigmas_inv_preLN);
 
 
         /* -------------
@@ -471,11 +466,11 @@ int main() {
         fill(d_ffn_b2.begin(), d_ffn_b2.end(), 0.0);
         fill(d_ffn_W2.begin(), d_ffn_W2.end(), 0.0);
 
-        fill(d_scale_final.begin(), d_scale_final.end(), 0.0);
-        fill(d_shift_final.begin(), d_shift_final.end(), 0.0);
+        fill(d_scale3.begin(), d_scale3.end(), 0.0);
+        fill(d_shift3.begin(), d_shift3.end(), 0.0);
 
-        fill(d_scale_ffn.begin(), d_scale_ffn.end(), 0.0);
-        fill(d_shift_ffn.begin(), d_shift_ffn.end(), 0.0);
+        fill(d_scale2.begin(), d_scale2.end(), 0.0);
+        fill(d_shift2.begin(), d_shift2.end(), 0.0);
 
         fill(d_logits_b.begin(), d_logits_b.end(), 0.0);
         fill(d_logits_W.begin(), d_logits_W.end(), 0.0);
@@ -553,25 +548,25 @@ int main() {
              * mean and scaled by its standard deviation) for the current input
              * token. Meanwhile, accumulate the loss' gradient wrt the post-FFN
              * scale and shift.
-             * NOTE: stabilize if scale_final is too small */
-            auto dinputs_scalefinal_m_sum             = 0.0;
-            auto dinputs_scalefinal_inputspreLN_m_sum = 0.0;
+             * NOTE: stabilize if scale3 is too small */
+            auto dinputs_scale3_m_sum             = 0.0;
+            auto dinputs_scale3_inputspreLN_m_sum = 0.0;
 
             for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-                const auto d_inputs_mi   = d_inputs_m[i];
-                const auto scale_final_i = scale_final[i];
+                const auto d_inputs_mi = d_inputs_m[i];
+                const auto scale3_i    = scale3[i];
 
-                const auto input_preLN_normalized_mi = (scale_final_i > TOLERANCE) ?
-                    (inputs[idx_m + i] - shift_final[i])/scale_final_i : 0.0;
+                const auto input_preLN_normalized_mi = (scale3_i > TOLERANCE) ?
+                    (inputs[idx_m + i] - shift3[i])/scale3_i : 0.0;
                 inputs_preLN_normalized_m[i] = input_preLN_normalized_mi;
 
-                d_shift_final[i] += d_inputs_mi;
-                d_scale_final[i] += d_inputs_mi*input_preLN_normalized_mi;
+                d_shift3[i] += d_inputs_mi;
+                d_scale3[i] += d_inputs_mi*input_preLN_normalized_mi;
 
-                const auto dinputs_scalefinal_mi      = d_inputs_mi*scale_final_i;
-                dinputs_scalefinal_m[i]               = dinputs_scalefinal_mi;
-                dinputs_scalefinal_m_sum             += dinputs_scalefinal_mi;
-                dinputs_scalefinal_inputspreLN_m_sum += dinputs_scalefinal_mi*input_preLN_normalized_mi;
+                const auto dinputs_scale3_mi      = d_inputs_mi*scale3_i;
+                dinputs_scale3_m[i]               = dinputs_scale3_mi;
+                dinputs_scale3_m_sum             += dinputs_scale3_mi;
+                dinputs_scale3_inputspreLN_m_sum += dinputs_scale3_mi*input_preLN_normalized_mi;
             }
 
 
@@ -582,8 +577,8 @@ int main() {
             for (auto i = decltype(DIM){0}; i < DIM; ++i) {
                 const auto idx_i_exp = i*dim_ffn_expanded;
 
-                const auto d_ffn_b2_mi = (dinputs_scalefinal_m[i]
-                    - (dinputs_scalefinal_m_sum + dinputs_scalefinal_inputspreLN_m_sum*inputs_preLN_normalized_m[i])/static_cast<double>(DIM)
+                const auto d_ffn_b2_mi = (dinputs_scale3_m[i]
+                    - (dinputs_scale3_m_sum + dinputs_scale3_inputspreLN_m_sum*inputs_preLN_normalized_m[i])/static_cast<double>(DIM)
                     )*sigma_inv_preLN_m;
 
                 d_ffn_b2_m[i] = d_ffn_b2_mi;
@@ -593,12 +588,12 @@ int main() {
                     d_ffn_W2[r*DIM + i] += d_ffn_b2_mi*ffn_h[idx_m_exp + r];
                 }
 
-                const auto scale_ffn_i = scale_ffn[i];
-                const auto inputs_preFFN_normalized_mi = (scale_ffn_i > TOLERANCE) ?
-                    (inputs_preFFN[idx_m + i] - shift_ffn[i])/scale_ffn_i : 0.0;
+                const auto scale2_i = scale2[i];
+                const auto inputs_preFFN_normalized_mi = (scale2_i > TOLERANCE) ?
+                    (inputs_preFFN[idx_m + i] - shift2[i])/scale2_i : 0.0;
 
-                d_shift_ffn[i] += d_ffn_b2_mi;
-                d_scale_ffn[i] += d_ffn_b2_mi*inputs_preFFN_normalized_mi;
+                d_shift2[i] += d_ffn_b2_mi;
+                d_scale2[i] += d_ffn_b2_mi*inputs_preFFN_normalized_mi;
             }
 
             for (auto r = decltype(dim_ffn_expanded){0}; r < dim_ffn_expanded; ++r) {
@@ -627,11 +622,11 @@ int main() {
         }
 
         for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-            ffn_b2[i]      -= params_norm_fac*d_ffn_b2[i];
-            scale_final[i] -= params_norm_fac*d_scale_final[i];
-            shift_final[i] -= params_norm_fac*d_shift_final[i];
-            scale_ffn[i]   -= params_norm_fac*d_scale_ffn[i];
-            shift_ffn[i]   -= params_norm_fac*d_shift_ffn[i];
+            ffn_b2[i] -= params_norm_fac*d_ffn_b2[i];
+            scale3[i] -= params_norm_fac*d_scale3[i];
+            shift3[i] -= params_norm_fac*d_shift3[i];
+            scale2[i] -= params_norm_fac*d_scale2[i];
+            shift2[i] -= params_norm_fac*d_shift2[i];
         }
 
         for (auto idx = decltype(dim_ffn_weights){0}; idx < dim_ffn_weights; ++idx) {
