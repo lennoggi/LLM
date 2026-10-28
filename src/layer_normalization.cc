@@ -7,67 +7,81 @@
 #include "parameters.hh"
 
 
-/* =========================================================================
- * Routine normalizing the components of each vector in a list of vectors so
- * that these components average out to 0 and their variance is 1. Then, the
- * vector components are scaled and shifted.
- * ========================================================================= */
-void layer_norm(      std::vector<double> &vecs,
+/* =============================================================================
+ * Routine normalizing the components of each vector in a list of vectors
+ * (flattened matrix!) so that these components average out to 0 and their
+ * variance is 1. Then, the vector components are scaled and shifted. The
+ * intermediate vectors `xhat` and `sigmas_inv` are output so they don't have to
+ * be recomputed during the backward training step.
+ * ============================================================================= */
+void layer_norm(      std::vector<double> &x,
                 const std::vector<double> &scale,
                 const std::vector<double> &shift,
-                      std::vector<double> *sigmas_inv) {
+                      std::vector<double> &xhat,
+                      std::vector<double> &sigmas_inv) {
     /* Specifying 'long int' explicitly here so that the compiler knows it has
      * to pick std::div(long int a, long int b) (std::div_t is overloaded) */
-    const long int ntot     = vecs.size();
-    const long int vec_size = scale.size();
+    const long int nxdim = x.size();
+    const long int dim   = scale.size();
 
-    if (shift.size() != vec_size) {
-        throw std::runtime_error("layer_normalization(): shift.size() must equal scale.size(), which in turn must equal the size of each of the input vectors");
+    if (xhat.size() != nxdim) {
+        throw std::runtime_error("layer_norm(): xhat and x sizes differ");
         return;  // Not reached
     }
 
-    const auto nvecs_rem = std::div(ntot, vec_size);
-    const auto nvecs     = nvecs_rem.quot;
+    if (shift.size() != dim) {
+        throw std::runtime_error("layer_norm(): shift.size() differs from `dim` (size of each input vector)");
+        return;  // Not reached
+    }
 
-    if (nvecs_rem.rem != 0) {
-        throw std::runtime_error("layer_normalization(): inconsistent vector size leads to non-integer number of input vectors");
+    const auto nxdiv = std::div(nxdim, dim);
+    const auto nx    = nxdiv.quot;
+
+    if (nxdiv.rem != 0) {
+        throw std::runtime_error("layer_norm(): inconsistent input leads to non-integer number of input vectors");
+        return;  // Not reached
+    }
+
+    if (sigmas_inv.size() != nx) {
+        throw std::runtime_error("layer_norm(): sigmas_inv.size() differs from nx (number of input vectors)");
         return;  // Not reached
     }
 
 
-    for (auto m = decltype(nvecs){0}; m < nvecs; ++m) {
-        const auto idx_m = m*vec_size;
-        double mean      = 0.0; 
-        double sum_diffs = 0.0; 
+    for (auto m = decltype(nx){0}; m < nx; ++m) {
+        const auto idx_m = m*dim;
 
         /* Welford's algorithm to compute the mean and variance of a
          * sample in one pass and without a potential catastrophic
          * cancellation when computing the variance */
-        for (auto i = decltype(vec_size){0}; i < vec_size; ++i) {
+        double mean      = 0.0;
+        double sum_diffs = 0.0;
+
+        for (auto i = decltype(dim){0}; i < dim; ++i) {
             const auto mi     = idx_m + i;
-            const auto delta1 = vecs[mi] - mean;
+            const auto delta1 = x[mi] - mean;
                        mean  += delta1/static_cast<double>(i+1);
-            const auto delta2 = vecs[mi] - mean;
+            const auto delta2 = x[mi] - mean;
                    sum_diffs += delta1*delta2;
         }
 
         /* NOTE: sum_diffs==0 can only happen if all elements in
-         *       vecs[mi] are the same, which is very unlikely */
+         *       x[mi] are the same, which is very unlikely */
         assert(sum_diffs >= 0.0);
 
-        constexpr auto sigma_inv_fallback = 1.0/sqrt(static_cast<double>(VAR_TINY));
-        const     auto sigma_inv          = (sum_diffs == 0.0) ? sigma_inv_fallback : sqrt(static_cast<double>(vec_size-1)/sum_diffs);
+        /* FIXME
+         * 1. Use the population variance instead of the unbiased one, so divide by dim, not dim-1
+         *    NOTE: this matters if DIM==1 because you then divide by zero
+         * 2. put VAR_TINY into the sqrt instead of being the fallback because the fallback triggers non-continuously*/
+        constexpr auto sigma_inv_fallback = 1.0/std::sqrt(static_cast<double>(VAR_TINY));
+        const     auto sigma_inv          = (sum_diffs == 0.0) ? sigma_inv_fallback : std::sqrt(static_cast<double>(dim-1)/sum_diffs);
         assert(sigma_inv > 0.0);
+        sigmas_inv[m] = sigma_inv;
 
-        for (auto i = decltype(vec_size){0}; i < vec_size; ++i) {
+        for (auto i = decltype(dim){0}; i < dim; ++i) {
             const auto mi = idx_m + i;
-            vecs[mi] = scale[i]*(sigma_inv*(vecs[mi] - mean)) + shift[i];
-        }
-
-
-        // Optionally output sqrt(variance)
-        if (sigmas_inv != nullptr) {
-            sigmas_inv->at(m) = sigma_inv;
+            xhat[mi] = sigma_inv*(x[mi] - mean);
+            x[mi]    = scale[i]*xhat[mi] + shift[i];
         }
     }
 

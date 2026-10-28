@@ -20,6 +20,9 @@
 
 
 int main() {
+    /* -------------
+     * Text encoding
+     * ------------- */
     const auto training_text = file_to_string(TRAINING_FILE);
     const auto    input_text = file_to_string(INPUT_FILE);
 
@@ -41,13 +44,16 @@ int main() {
         return 1;  // Not reached
     }
 
-
     /* Initialize a vector representation ("embedding") of each token in the
      * vocabulary with random numbers to be optimized during training */
     const auto nv    = tokenizer.vocab_token2id.size();
     const auto nvdim = nv*DIM;
     std::vector<double> vocab_embedding(nvdim);
 
+
+    /* -------------------------------
+     * Initialize learnable parameters
+     * ------------------------------- */
     std::mt19937 gen;
 
     if constexpr (RANDOM_SEED >= 0) {
@@ -83,7 +89,7 @@ int main() {
     std::vector<double> scale3(DIM, 1.0), shift3(DIM, 0.0);  // LN before predicting the new token
 
 
-    // Initialize the query, key, and value weight matrices to random values
+    // Initialize the query, key, and value weight matrices with random values
     constexpr auto dim_sq = DIM*DIM;
     std::vector<double> Wq(dim_sq), Wk(dim_sq), Wv(dim_sq);
 
@@ -144,28 +150,37 @@ int main() {
     }
 
 
+    /* ------------------
+     * Preallocate memory
+     * ------------------ */
     /* Preallocate:
      * - The input vectors `x`, which change along the way during the forward
      *   due to layer normalization and skio connections
      * - The input vectors `x1`, `x2`, and `x3` after each of the three layer
      *   normalization steps */
-    std::vector<double> x(nxdim), x_preFFN(nxdim);
+    std::vector<double> x(nxdim), x_preFFN(nxdim);  // XXX: remove x_preFFN once layer_normalization is sorted
 
-    /* Preallocate the query, key, and value matrices and the attention and
-     * context matrices */
+    // Query, key, and value matrices
     std::vector<double> queries(nxdim), keys(nxdim), values(nxdim);
+
+    // Attention and context matrices
     std::vector<double> attention(nx*nx);
     std::vector<double> context(nxdim);
 
-    // Preallocate the FFN hidden and output layers
+    // Layer normalization intermediate parameters
+    std::vector<double> xhat1(nxdim), sigmas_inv1(nx);  // LN before the attention block
+    std::vector<double> xhat2(nxdim), sigmas_inv2(nx);  // LN before the feed-forward neural network (FFN)
+    std::vector<double> xhat3(nxdim), sigmas_inv3(nx);  // LN before predicting the new token
+
+    // FFN hidden and output layers
     const auto nxdim_expanded = nx*dim_ffn_expanded;
     std::vector<double> ffn_h(nxdim_expanded), ffn_h_prime(nxdim_expanded);
     std::vector<double> ffn_out(nxdim);
 
-    // Preallocate the logits vectors
+    // Logits vectors
     std::vector<double> logits(nx*nv);
 
-    // Preallocate the loss' gradients wrt to the model's parameters
+    // Loss' gradients wrt to the model's parameters
     std::vector<double> d_ffn_b1(dim_ffn_expanded);
     std::vector<double> d_ffn_W1(dim_ffn_weights);  // Matrix (DIM, dim_ffn_expanded)
 
@@ -181,11 +196,9 @@ int main() {
     std::vector<double> d_logits_W(nvdim);  // Matrix (DIM, nv)
     std::vector<double> d_logits_b(nv);
 
-    // Preallocate some helpers to improve performance
+    // Helpers
     std::vector<double> probs_m(nv);
-    std::vector<double> x_preLN_normalized_m(DIM);
-    std::vector<double> sigmas_inv_preLN(nx);
-    std::vector<double> dx_m(DIM);
+    std::vector<double> dx3_m(DIM);
     std::vector<double> dx_scale3_m(DIM);
     std::vector<double> d_ffn_b2_m(DIM);
 
@@ -247,7 +260,7 @@ int main() {
          * average out to 0 and have variance 1, but then scale and shift them
          * by trainable parameters, to make training more stable.
          *   ***** The input changes: x -> x1 ***** */
-        layer_norm(x, scale1, shift1);
+        layer_norm(x, scale1, shift1, xhat1, sigmas_inv1);
 
         /* ------------------------------
          * Query, key, and value matrices
@@ -351,15 +364,15 @@ int main() {
          * - SHORTCUT CONNECTION: add the context vectors to the corresponding
          *    input vectors to preserve the quality of the gradient flow during
          *    the backward step.
-         *   ***** The input changes: x1 -> x2 ***** */
+         *   ***** The input changes: x1 -> x1skip ***** */
         skip_conn_dropout(x, context, udist, gen);
 
         /* ----------------------
          * Layer normalization #2
          * ----------------------
-         *   ***** The input changes: x2 -> x3 *****
+         *   ***** The input changes: x1skip -> x2 *****
          * NOTE: save the inputs at this stage for the backward pass */
-        layer_norm(x, scale2, shift2);
+        layer_norm(x, scale2, shift2, xhat2, sigmas_inv2);
         x_preFFN = x;
 
 
@@ -416,7 +429,7 @@ int main() {
          * Dropout plus skip/shortcut connection between the network output and
          * the input
          * --------------------------------------------------------------------
-         *   ***** The input changes: x3 -> x4 ***** */
+         *   ***** The input changes: x2 -> x2skip ***** */
         skip_conn_dropout(x, ffn_out, udist, gen);
 
         /* ----------------------
@@ -426,8 +439,8 @@ int main() {
          *   the backward step. The pre-layer-norm inputs will also be needed
          *   but they will be reconstructed as they are too many to be stored
          *   while cheap to recalculate.
-         *   ***** The input changes: x4 -> x5 ***** */
-        layer_norm(x, scale3, shift3, &sigmas_inv_preLN);
+         *   ***** The input changes: x2skip -> x3 ***** */
+        layer_norm(x, scale3, shift3, xhat3, sigmas_inv3);
 
 
         /* -------------
@@ -537,7 +550,7 @@ int main() {
              * vector for the current input token (i.e., for the current m
              * index) and accumulate the loss' gradients wrt the logits' weights
              * and biases and wrt the final inputs */
-            fill(dx_m.begin(), dx_m.end(), 0.0);
+            fill(dx3_m.begin(), dx3_m.end(), 0.0);
 
             for (auto v = decltype(nv){0}; v < nv; ++v) {
                 auto probs_mv = probs_m[v];
@@ -552,47 +565,41 @@ int main() {
                 for (auto i = decltype(DIM){0}; i < DIM; ++i) {
                     const auto iv = i*nv + v;
                     d_logits_W[iv] += probs_mv*x[idx_m + i];
-                    dx_m[i]        += probs_mv*logits_W[iv];
+                    dx3_m[i]       += probs_mv*logits_W[iv];
                 }
             }
 
 
-            /* Recover the pre-final-layer-norm input vector (shifted by its
-             * mean and scaled by its standard deviation) for the current input
-             * token. Meanwhile, accumulate the loss' gradient wrt the post-FFN
-             * scale and shift.
-             * NOTE: stabilize if scale3 is too small */
-            auto dx_scale3_m_sum             = 0.0;
-            auto dx_scale3_xpreLN_m_sum = 0.0;
+            // Accumulate the loss' gradient wrt the post-FFN scale and shift
+            double dx_scale3_m_sum       = 0.0;
+            double dx_scale3_xhat3_m_sum = 0.0;
 
             for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-                const auto dx_mi    = dx_m[i];
+                const auto dx3_mi   = dx3_m[i];
+                const auto xhat3_mi = xhat3[idx_m + i];
                 const auto scale3_i = scale3[i];
 
-                const auto input_preLN_normalized_mi = (scale3_i > TOLERANCE) ?
-                    (x[idx_m + i] - shift3[i])/scale3_i : 0.0;
-                x_preLN_normalized_m[i] = input_preLN_normalized_mi;
+                d_shift3[i] += dx3_mi;
+                d_scale3[i] += dx3_mi*xhat3_mi;
 
-                d_shift3[i] += dx_mi;
-                d_scale3[i] += dx_mi*input_preLN_normalized_mi;
-
-                const auto dx_scale3_mi  = dx_mi*scale3_i;
-                dx_scale3_m[i]           = dx_scale3_mi;
-                dx_scale3_m_sum         += dx_scale3_mi;
-                dx_scale3_xpreLN_m_sum  += dx_scale3_mi*input_preLN_normalized_mi;
+                const auto dx_scale3_mi = dx3_mi*scale3_i;
+                dx_scale3_m[i]          = dx_scale3_mi;
+                dx_scale3_m_sum        += dx_scale3_mi;
+                dx_scale3_xhat3_m_sum  += dx_scale3_mi*xhat3_mi;
             }
 
 
             /* Build the loss gradients wrt to the FFN weights and biases and
              * the pre-FFN layer normalization scale and shift */
-            const auto sigma_inv_preLN_m = sigmas_inv_preLN[m];
+            const auto sigma_inv3_m = sigmas_inv3[m];
 
             for (auto i = decltype(DIM){0}; i < DIM; ++i) {
                 const auto idx_i_exp = i*dim_ffn_expanded;
+                const auto xhat3_mi  = xhat3[idx_m + i];
 
                 const auto d_ffn_b2_mi = (dx_scale3_m[i]
-                    - (dx_scale3_m_sum + dx_scale3_xpreLN_m_sum*x_preLN_normalized_m[i])/static_cast<double>(DIM)
-                    )*sigma_inv_preLN_m;
+                    - (dx_scale3_m_sum + dx_scale3_xhat3_m_sum*xhat3_mi)/static_cast<double>(DIM)
+                    )*sigma_inv3_m;
 
                 d_ffn_b2_m[i] = d_ffn_b2_mi;
                 d_ffn_b2[i]  += d_ffn_b2_mi;
