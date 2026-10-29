@@ -155,10 +155,9 @@ int main() {
      * ------------------ */
     /* Preallocate:
      * - The input vectors `x`, which change along the way during the forward
-     *   due to layer normalization and skio connections
-     * - The input vectors `x1`, `x2`, and `x3` after each of the three layer
-     *   normalization steps */
-    std::vector<double> x(nxdim), x_preFFN(nxdim);  // XXX: remove x_preFFN once layer_normalization is sorted
+     *   due to layer normalization and skip connections
+     * - The input vectors `x2` after the second layer normalization step */
+    std::vector<double> x(nxdim), x2(nxdim);
 
     // Query, key, and value matrices
     std::vector<double> queries(nxdim), keys(nxdim), values(nxdim);
@@ -371,9 +370,10 @@ int main() {
          * Layer normalization #2
          * ----------------------
          *   ***** The input changes: x1skip -> x2 *****
-         * NOTE: save the inputs at this stage for the backward pass */
+         * NOTE: save the inputs at this stage to avoid rebuilding them during
+         *       the backward pass */
         layer_norm(x, scale2, shift2, xhat2, sigmas_inv2);
-        x_preFFN = x;
+        x2 = x;
 
 
         /* -----------------------------------------------------------
@@ -570,7 +570,7 @@ int main() {
             }
 
 
-            // Accumulate the loss' gradient wrt the post-FFN scale and shift
+            // Accumulate the loss' gradients wrt the post-FFN scale and shift
             double dx_scale3_m_sum       = 0.0;
             double dx_scale3_xhat3_m_sum = 0.0;
 
@@ -589,7 +589,7 @@ int main() {
             }
 
 
-            /* Build the loss gradients wrt to the FFN weights and biases and
+            /* Accumulate the loss' gradients wrt to the FFN weights and biases and
              * the pre-FFN layer normalization scale and shift */
             const auto sigma_inv3_m = sigmas_inv3[m];
 
@@ -608,12 +608,8 @@ int main() {
                     d_ffn_W2[r*DIM + i] += d_ffn_b2_mi*ffn_h[idx_m_exp + r];
                 }
 
-                const auto scale2_i = scale2[i];
-                const auto x_preFFN_normalized_mi = (scale2_i > TOLERANCE) ?
-                    (x_preFFN[idx_m + i] - shift2[i])/scale2_i : 0.0;
-
                 d_shift2[i] += d_ffn_b2_mi;
-                d_scale2[i] += d_ffn_b2_mi*x_preFFN_normalized_mi;
+                d_scale2[i] += d_ffn_b2_mi*xhat2[idx_m + i];
             }
 
             for (auto r = decltype(dim_ffn_expanded){0}; r < dim_ffn_expanded; ++r) {
@@ -627,7 +623,7 @@ int main() {
                 d_ffn_b1[r] += d_ffn_b1_r;
 
                 for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-                    d_ffn_W1[i*dim_ffn_expanded + r] += d_ffn_b1_r*x_preFFN[idx_m + i];
+                    d_ffn_W1[i*dim_ffn_expanded + r] += d_ffn_b1_r*x2[idx_m + i];
                 }
             }
         }
