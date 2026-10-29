@@ -498,8 +498,8 @@ int main() {
 
             /* Build the log of the sum of the stabilized exponentials of all
              * the logits for the current input token */
-                  double *logits_rowm  = &logits[idx_m_vocab];
-            const double  logits_m_max = *std::max_element(logits_rowm, logits_rowm + nv);
+                  double *logits_m     = &logits[idx_m_vocab];
+            const double  logits_m_max = *std::max_element(logits_m, logits_m + nv);
                   double  sum_exp_m    = 0.0;
 
             for (auto v = decltype(nv){0}; v < nv; ++v) {
@@ -510,7 +510,7 @@ int main() {
 
             // XXX: remove assertion for performance
             assert(sum_exp_m > 0.0);
-            const auto log_sum_exp_m = log(sum_exp_m);
+            const auto log_sum_exp_m = std::log(sum_exp_m);
 
             /* Add the loss term for the current input token
              * NOTE: letting
