@@ -5,10 +5,8 @@
 #include <sstream>
 #include <random>
 #include <algorithm>
-#include <limits>
 #include <stdexcept>
 #include <chrono>
-#include <limits>
 
 #include <cblas.h>
 
@@ -308,18 +306,9 @@ int main() {
          *   normalization that doesn't need a full row of A to find the row's
          *   max value */
         for (auto m = decltype(nx){0}; m < nx; ++m) {
-            double *row    = &attention[m*nx];
-            double row_max = -std::numeric_limits<double>::infinity();
-
-            for (auto n = decltype(nx){0}; n <= m; ++n) {
-                if (row[n] > row_max) {
-                    row_max = row[n];
-                }
-            }
-
-            // XXX: remove assertion for performance
-            assert(std::isfinite(row_max));
-            double sum_exp = 0.0; 
+                  double *row     = &attention[m*nx];
+            const double  row_max = *std::max_element(row, row + nx);
+                  double  sum_exp = 0.0; 
 
             for (auto n = decltype(nx){0}; n <= m; ++n) {
                 row[n]   = std::exp(row[n] - row_max);
@@ -507,19 +496,11 @@ int main() {
             const auto idx_m_vocab = m*nv;
             const auto idx_m_exp   = m*dim_ffn_expanded;
 
-            // Find the largest logit for the current input token
-            double logits_m_max = -std::numeric_limits<double>::infinity();
-
-            for (auto v = decltype(nv){0}; v < nv; ++v) {
-                const auto logits_mv = logits[idx_m_vocab + v];
-                if (logits_mv > logits_m_max) {
-                    logits_m_max = logits_mv;
-                }
-            }
-
             /* Build the log of the sum of the stabilized exponentials of all
              * the logits for the current input token */
-            double sum_exp_m = 0.0;
+                  double *logits_rowm  = &logits[idx_m_vocab];
+            const double  logits_m_max = *std::max_element(logits_rowm, logits_rowm + nv);
+                  double  sum_exp_m    = 0.0;
 
             for (auto v = decltype(nv){0}; v < nv; ++v) {
                 const auto exp_term = std::exp(logits[idx_m_vocab + v] - logits_m_max);
@@ -527,6 +508,7 @@ int main() {
                 sum_exp_m += exp_term;
             }
 
+            // XXX: remove assertion for performance
             assert(sum_exp_m > 0.0);
             const auto log_sum_exp_m = log(sum_exp_m);
 
