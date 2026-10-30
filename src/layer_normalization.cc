@@ -20,8 +20,8 @@ void layer_norm(      std::vector<double> &x,
                       std::vector<double> &sigmas_inv) {
     /* Specifying 'long int' explicitly here so that the compiler knows it has
      * to pick std::div(long int a, long int b) (std::div_t is overloaded) */
-    const long int nxdim = x.size();
-    const long int dim   = scale.size();
+    const auto nxdim = x.size();
+    const auto dim   = scale.size();
 
     if (xhat.size() != nxdim) {
         throw std::runtime_error("layer_norm(): xhat and x sizes differ");
@@ -33,7 +33,7 @@ void layer_norm(      std::vector<double> &x,
         return;  // Not reached
     }
 
-    const auto nxdiv = std::div(nxdim, dim);
+    const auto nxdiv = std::div(static_cast<long long int>(nxdim), static_cast<long long int>(dim));
     const auto nx    = nxdiv.quot;
 
     if (nxdiv.rem != 0) {
@@ -41,7 +41,7 @@ void layer_norm(      std::vector<double> &x,
         return;  // Not reached
     }
 
-    if (sigmas_inv.size() != nx) {
+    if (sigmas_inv.size() != static_cast<decltype(sigmas_inv.size())>(nx)) {
         throw std::runtime_error("layer_norm(): sigmas_inv.size() differs from nx (number of input vectors)");
         return;  // Not reached
     }

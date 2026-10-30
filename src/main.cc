@@ -576,9 +576,7 @@ int main() {
             const auto sigma_inv3_m = sigmas_inv3[m];
 
             for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-                const auto idx_i_exp = i*dim_ffn_expanded;
-                const auto xhat3_mi  = xhat3[idx_m + i];
-
+                const auto xhat3_mi    = xhat3[idx_m + i];
                 const auto d_ffn_b2_mi = (dx_scale3_m[i]
                     - (dx_scale3_m_sum + dx_scale3_xhat3_m_sum*xhat3_mi)/static_cast<double>(DIM)
                     )*sigma_inv3_m;
