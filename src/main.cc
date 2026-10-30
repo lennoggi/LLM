@@ -389,14 +389,14 @@ int main() {
         constexpr double a              = 0.044715;
 
         for (auto idx = decltype(nxdim_expanded){0}; idx < nxdim_expanded; ++idx) {
-            auto &x = ffn_h[idx];
-            const auto ax2 = a*x*x;
-            const auto sqrt_2_over_pi_x = sqrt_2_over_pi*x;
-            const auto th   = tanh(sqrt_2_over_pi_x*(1.0 + ax2));
+            auto &z = ffn_h[idx];
+            const auto az2 = a*z*z;
+            const auto sqrt_2_over_pi_z = sqrt_2_over_pi*z;
+            const auto th   = tanh(sqrt_2_over_pi_z*(1.0 + az2));
             const auto thp1 = th + 1.0;
 
-            x *= 0.5*thp1;
-            ffn_h_prime[idx] = 0.5*(thp1 + sqrt_2_over_pi_x*(1.0 + 3.0*ax2)*(1.0 - th*th));
+            z *= 0.5*thp1;
+            ffn_h_prime[idx] = 0.5*(thp1 + sqrt_2_over_pi_z*(1.0 + 3.0*az2)*(1.0 - th*th));
         }
 
         /* STEP 3: ffn_out = ffn_h*ffn_W2 + / [ffn_b2] \ |
