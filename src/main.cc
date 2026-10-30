@@ -423,12 +423,7 @@ int main() {
 
         /* ----------------------
          * Layer normalization #3
-         * ----------------------
-         * NOTE: save the inverse standard deviations for each input token for
-         *   the backward step. The pre-layer-norm inputs will also be needed
-         *   but they will be reconstructed as they are too many to be stored
-         *   while cheap to recalculate.
-         *   ***** The input changes: x2skip -> x3 ***** */
+         * ---------------------- */
         layer_norm(x, scale3, shift3, xhat3, sigmas_inv3);
 
 
