@@ -66,16 +66,12 @@ void layer_norm(      std::vector<double> &x,
         }
 
         /* NOTE: sum_diffs==0 can only happen if all elements in
-         *       x[mi] are the same, which is very unlikely */
-        assert(sum_diffs >= 0.0);
-
-        /* FIXME
-         * 1. Use the population variance instead of the unbiased one, so divide by dim, not dim-1
-         *    NOTE: this matters if DIM==1 because you then divide by zero
-         * 2. put VAR_TINY into the sqrt instead of being the fallback because the fallback triggers non-continuously*/
-        constexpr auto sigma_inv_fallback = 1.0/std::sqrt(static_cast<double>(VAR_TINY));
-        const     auto sigma_inv          = (sum_diffs == 0.0) ? sigma_inv_fallback : std::sqrt(static_cast<double>(dim-1)/sum_diffs);
-        assert(sigma_inv > 0.0);
+         *   x[mi] are the same, which is very unlikely. However, very long
+         *   sequences (i.e., a very large `dim`) can make `sum_diffs` go
+         *   slightly negative due to floating point rounding in the Welford
+         *   loop above. */
+        sum_diffs = std::max(0.0, sum_diffs);
+        const auto sigma_inv = std::sqrt(static_cast<double>(dim)/(sum_diffs + VAR_TINY));
         sigmas_inv[m] = sigma_inv;
 
         for (auto i = decltype(dim){0}; i < dim; ++i) {
