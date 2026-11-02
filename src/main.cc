@@ -278,10 +278,10 @@ int main() {
             nx, DIM, DIM, 1.0, x.data(), DIM, Wv.data(), DIM,
             0.0, values.data(), DIM);
 
-        /* ----------------------------------
+        /* ------------------------------------------------
          * Attention matrix
-         *   attention = queries * (keys^T)
-         * ----------------------------------
+         *   attention = (1/sqrt(DIM)) * queries * (keys^T)
+         * ------------------------------------------------
          * - queries:   nx*DIM
          * - keys^T:    DIM*nx
          * - attention: nx*nx
@@ -528,10 +528,11 @@ int main() {
              * index) and accumulate the loss' gradients wrt the logits' weights
              * and biases and wrt the final inputs */
             fill(dx3_m.begin(), dx3_m.end(), 0.0);
+            const double sum_exp_m_inv = 1.0/sum_exp_m;
 
             for (auto v = decltype(nv){0}; v < nv; ++v) {
                 auto probs_mv = probs_m[v];
-                probs_mv     /= sum_exp_m;
+                probs_mv     *= sum_exp_m_inv;
 
                 if (v == next_input_id) {
                     probs_mv -= 1.0;
