@@ -194,7 +194,7 @@ int main() {
     std::vector<double> d_logits_b(nv);
 
     // Helpers
-    std::vector<double> probs_m(nv);
+    std::vector<double> probs(nx*nv);
     std::vector<double> dx3_m(DIM);
     std::vector<double> dx_scale3_m(DIM);
     std::vector<double> d_ffn_b2_m(DIM);
@@ -307,7 +307,9 @@ int main() {
          *   max value */
         for (auto m = decltype(nx){0}; m < nx; ++m) {
                   double *row     = &attention[m*nx];
-            const double  row_max = *std::max_element(row, row + nx);
+            /* Restrict the maximum to the causal (i.e., lower-diagonal) part
+             * of the attention matrix                                          */
+            const double  row_max = *std::max_element(row, row + m + 1);
                   double  sum_exp = 0.0; 
 
             for (auto n = decltype(nx){0}; n <= m; ++n) {
@@ -483,7 +485,6 @@ int main() {
         fill(d_shift2.begin(), d_shift2.end(), 0.0);
 
         fill(d_logits_b.begin(), d_logits_b.end(), 0.0);
-        fill(d_logits_W.begin(), d_logits_W.end(), 0.0);
 
 
         for (auto m = decltype(nx){0}; m < nx - 1; ++m) {
@@ -498,8 +499,9 @@ int main() {
                   double  sum_exp_m    = 0.0;
 
             for (auto v = decltype(nv){0}; v < nv; ++v) {
-                const auto exp_term = std::exp(logits[idx_m_vocab + v] - logits_m_max);
-                probs_m[v] = exp_term;  // NOTE: not yet normalized by sum_exp_m
+                const auto mv       = idx_m_vocab + v;
+                const auto exp_term = std::exp(logits[mv] - logits_m_max);
+                probs[mv]  = exp_term;  // NOTE: not yet normalized by sum_exp_m
                 sum_exp_m += exp_term;
             }
 
@@ -529,19 +531,17 @@ int main() {
             const double sum_exp_m_inv = 1.0/sum_exp_m;
 
             for (auto v = decltype(nv){0}; v < nv; ++v) {
-                auto probs_mv = probs_m[v];
-                probs_mv     *= sum_exp_m_inv;
+                probs[idx_m_vocab + v] *= sum_exp_m_inv;
+            }
 
-                if (v == next_input_id) {
-                    probs_mv -= 1.0;
-                }
+            probs[idx_m_vocab + next_input_id] -= 1.0;
 
+            for (auto v = decltype(nv){0}; v < nv; ++v) {
+                const auto probs_mv = probs[idx_m_vocab + v];
                 d_logits_b[v] += probs_mv;
 
                 for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-                    const auto iv = i*nv + v;
-                    d_logits_W[iv] += probs_mv*x[idx_m + i];
-                    dx3_m[i]       += probs_mv*logits_W[iv];
+                    dx3_m[i] += probs_mv*logits_W[i*nv + v];  // XXX: cblas_dgemm
                 }
             }
 
@@ -601,6 +601,17 @@ int main() {
                 }
             }
         }
+
+
+        // XXX: build d_logits_W
+        // NOTE: `x` holds the input tokens after layer normalization #3, so it
+        //       is `x3`, correct
+        // NOTE: `probs` should technically have dimensions (nx-1)*nv, but we
+        //   allocate it as nx*nv and set its last row to zero to make use of cblas_dgemm
+        std::fill(probs.begin() + (nx-1)*nv, probs.end(), 0.0);
+        cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                    DIM, nv, nx, 1.0, x.data(), DIM, probs.data(), nv,
+                    0.0, d_logits_W.data(), nv);
 
 
         // Compute average loss and update the model's parameters
