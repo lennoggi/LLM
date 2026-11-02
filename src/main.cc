@@ -503,10 +503,6 @@ int main() {
                 sum_exp_m += exp_term;
             }
 
-            // XXX: remove assertion for performance
-            assert(sum_exp_m > 0.0);
-            const auto log_sum_exp_m = std::log(sum_exp_m);
-
             /* Add the loss term for the current input token
              * NOTE: letting
              *   z[m][v+1] = logits[idx_m_vocab + ids_input[m+1])
@@ -519,8 +515,10 @@ int main() {
              *
              *  which implicitly applies softmax normalization to each logit to
              *  convert it into a probability */
+            // XXX: remove assertion for performance
+            assert(sum_exp_m > 0.0);
             const auto next_input_id = ids_input[m+1];
-            loss += -(logits[idx_m_vocab + next_input_id] - logits_m_max) + log_sum_exp_m;
+            loss += -(logits[idx_m_vocab + next_input_id] - logits_m_max) + std::log(sum_exp_m);
 
 
             /* Normalize the softmax probabilities for each logit in the logits
