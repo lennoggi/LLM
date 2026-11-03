@@ -135,9 +135,8 @@ int main() {
 
 
     /* Initialize the logits weights to the vocabulary embedding and the biases
-     * to zero
-     * NOTE: think of 'logits_W' as a (DIM, nv)-shaped matrix */
-    std::vector<double> logits_W(nvdim);
+     * to zero */
+    std::vector<double> logits_W(nvdim);  // Matrix (DIM, nv)
     std::vector<double> logits_b(nv, 0.0);
 
     for (auto v = decltype(nv){0}; v < nv; ++v) {
@@ -195,7 +194,7 @@ int main() {
 
     // Helpers
     std::vector<double> probs(nx*nv);
-    std::vector<double> dx3_m(DIM);
+    std::vector<double> dx3(nxdim);
     std::vector<double> dx_scale3_m(DIM);
     std::vector<double> d_ffn_b2_m(DIM);
 
@@ -259,12 +258,11 @@ int main() {
          *   ***** The input changes: x -> x1 ***** */
         layer_norm(x, scale1, shift1, xhat1, sigmas_inv1);
 
-        /* ------------------------------
-         * Query, key, and value matrices
+        /* ----------------
          * - queries = x*Wq
          * -    keys = x*Wk
          * -  values = x*Wv
-         * ------------------------------
+         * ----------------
          * - x:          nx*DIM
          * - Wq, Wk, Wv: DIM*DIM
          * - queries, keys, values: nx*DIM */
@@ -278,10 +276,9 @@ int main() {
             nx, DIM, DIM, 1.0, x.data(), DIM, Wv.data(), DIM,
             0.0, values.data(), DIM);
 
-        /* ------------------------------------------------
-         * Attention matrix
-         *   attention = (1/sqrt(DIM)) * queries * (keys^T)
-         * ------------------------------------------------
+        /* --------------------------------------------
+         * attention = (1/sqrt(DIM)) * queries * keys^T
+         * --------------------------------------------
          * - queries:   nx*DIM
          * - keys^T:    DIM*nx
          * - attention: nx*nx
@@ -332,8 +329,7 @@ int main() {
 
 
         /* ----------------------------
-         * Context matrix
-         *   context = attention*values
+         * context = attention * values
          * ----------------------------
          * - attention: nx*nx
          * - values:    nx*DIM
@@ -429,12 +425,11 @@ int main() {
         layer_norm(x, scale3, shift3, xhat3, sigmas_inv3);
 
 
-        /* -------------
-         * Logits matrix
-         * -------------
+        /* ------------------------------------------------
          * logits = x*logits_W + / [logits_b] \ |
          *                       | [logits_b] | | nv times
          *                       \ [logits_b] / |
+         * ------------------------------------------------
          * - x:        nx*DIM
          * - logits_W: DIM*nv
          * - logits:   nx*nv */
@@ -487,10 +482,11 @@ int main() {
         fill(d_logits_b.begin(), d_logits_b.end(), 0.0);
 
 
+        /* -------------------
+         * Input token loop #1
+         * ------------------- */
         for (auto m = decltype(nx){0}; m < nx - 1; ++m) {
-            const auto idx_m       = m*DIM;
             const auto idx_m_vocab = m*nv;
-            const auto idx_m_exp   = m*dim_ffn_expanded;
 
             /* Build the log of the sum of the stabilized exponentials of all
              * the logits for the current input token */
@@ -527,7 +523,6 @@ int main() {
              * vector for the current input token (i.e., for the current m
              * index) and accumulate the loss' gradients wrt the logits' weights
              * and biases and wrt the final inputs */
-            fill(dx3_m.begin(), dx3_m.end(), 0.0);
             const double sum_exp_m_inv = 1.0/sum_exp_m;
 
             for (auto v = decltype(nv){0}; v < nv; ++v) {
@@ -535,24 +530,59 @@ int main() {
             }
 
             probs[idx_m_vocab + next_input_id] -= 1.0;
+        }
 
+
+        /* -------------------------
+         * d_logits_W = x3^T * probs
+         * -------------------------
+         * - x3:         nx*DIM
+         * - probs:      nx*nv
+         * - d_logits_W: DIM*nv
+         * NOTE: `x` holds the input tokens after layer normalization #3, so it
+         *       really is `x3`
+         * NOTE: `probs` should technically have dimensions (nx-1)*nv, but we
+         *       allocate it as nx*nv and set its last row to zero to make use
+         *       of cblas_dgemm */
+        std::fill(probs.begin() + (nx-1)*nv, probs.end(), 0.0);
+
+        cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                    DIM, nv, nx, 1.0, x.data(), DIM, probs.data(), nv,
+                    0.0, d_logits_W.data(), nv);
+
+        /* ------------------------
+         * dx3 = probs * logits_W^T
+         * ------------------------
+         * - probs:    nx*nv
+         * - logits_W: DIM*nv
+         * - dx3:      nx*DIM */
+        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                    nx, DIM, nv, 1.0, probs.data(), nv, logits_W.data(), nv,
+                    0.0, dx3.data(), DIM);
+
+
+        /* -------------------
+         * Input token loop #2
+         * ------------------- */
+        for (auto m = decltype(nx){0}; m < nx - 1; ++m) {
+            const auto idx_m       = m*DIM;
+            const auto idx_m_vocab = m*nv;
+            const auto idx_m_exp   = m*dim_ffn_expanded;
+
+            // Accumulate the loss' gradient wrt to the logits' weights
             for (auto v = decltype(nv){0}; v < nv; ++v) {
                 const auto probs_mv = probs[idx_m_vocab + v];
                 d_logits_b[v] += probs_mv;
-
-                for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-                    dx3_m[i] += probs_mv*logits_W[i*nv + v];  // XXX: cblas_dgemm
-                }
             }
-
 
             // Accumulate the loss' gradients wrt the post-FFN scale and shift
             double dx_scale3_m_sum       = 0.0;
             double dx_scale3_xhat3_m_sum = 0.0;
 
             for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-                const auto dx3_mi   = dx3_m[i];
-                const auto xhat3_mi = xhat3[idx_m + i];
+                const auto mi       = idx_m + i;
+                const auto dx3_mi   = dx3[mi];
+                const auto xhat3_mi = xhat3[mi];
                 const auto scale3_i = scale3[i];
 
                 d_shift3[i] += dx3_mi;
@@ -603,18 +633,9 @@ int main() {
         }
 
 
-        // XXX: build d_logits_W
-        // NOTE: `x` holds the input tokens after layer normalization #3, so it
-        //       is `x3`, correct
-        // NOTE: `probs` should technically have dimensions (nx-1)*nv, but we
-        //   allocate it as nx*nv and set its last row to zero to make use of cblas_dgemm
-        std::fill(probs.begin() + (nx-1)*nv, probs.end(), 0.0);
-        cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
-                    DIM, nv, nx, 1.0, x.data(), DIM, probs.data(), nv,
-                    0.0, d_logits_W.data(), nv);
-
-
-        // Compute average loss and update the model's parameters
+        /* ----------------------------------------------------------
+         * Compute the average loss and update the model's parameters
+         * ---------------------------------------------------------- */
         loss *= loss_norm_fac;
         loss_file << it << "\t" << loss << std::endl;
 
