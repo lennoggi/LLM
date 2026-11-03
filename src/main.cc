@@ -303,27 +303,25 @@ int main() {
          *   normalization that doesn't need a full row of A to find the row's
          *   max value */
         for (auto m = decltype(nx){0}; m < nx; ++m) {
-                  double *row     = &attention[m*nx];
+                  double *attention_m = &attention[m*nx];
             /* Restrict the maximum to the causal (i.e., lower-diagonal) part
              * of the attention matrix                                          */
-            const double  row_max = *std::max_element(row, row + m + 1);
+            const double  attention_m_max = *std::max_element(attention_m, attention_m + m + 1);
                   double  sum_exp = 0.0; 
 
             for (auto n = decltype(nx){0}; n <= m; ++n) {
-                row[n]   = std::exp(row[n] - row_max);
-                sum_exp += row[n];
+                attention_m[n] = std::exp(attention_m[n] - attention_m_max);
+                sum_exp       += attention_m[n];
             }
 
-            // XXX: remove assertion for performance
-            assert(sum_exp > 0.0);
             const double inv_sum_exp = 1.0/sum_exp;
 
             for (auto n = decltype(nx){0}; n <= m; ++n) {
-                row[n] *= inv_sum_exp;
+                attention_m[n] *= inv_sum_exp;
             }
 
             for (auto n = decltype(nx){m+1}; n < nx; ++n) {
-                row[n] = 0.0;
+                attention_m[n] = 0.0;
             }
         }
 
@@ -513,8 +511,6 @@ int main() {
              *
              *  which implicitly applies softmax normalization to each logit to
              *  convert it into a probability */
-            // XXX: remove assertion for performance
-            assert(sum_exp_m > 0.0);
             const auto next_input_id = ids_input[m+1];
             loss += -(logits[idx_m_vocab + next_input_id] - logits_m_max) + std::log(sum_exp_m);
 
