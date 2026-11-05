@@ -582,7 +582,11 @@ int main() {
                 d_shift3[i] += dx3_mi;
                 d_scale3[i] += dx3_mi*xhat3_mi;
 
+                /* This could be saved to a buffer and reused in the next loop (*),
+                 * but a single multiplication is probably cheaper than a memory
+                 * access */
                 const auto u3_mi = dx3_mi*scale3_i;
+
                 u3_m_sum        += u3_mi;
                 u3_xhat3_m_sum  += u3_mi*xhat3_mi;
             }
@@ -597,7 +601,7 @@ int main() {
                 const auto dx3_mi   = dx3[mi];
                 const auto xhat3_mi = xhat3[mi];
                 const auto scale3_i = scale3[i];
-                const auto u3_mi    = dx3_mi*scale3_i;
+                const auto u3_mi    = dx3_mi*scale3_i;  // (*) HERE
 
                 const auto d_ffn_b2_mi = sigma_inv3_m*(
                     u3_mi - (u3_m_sum + u3_xhat3_m_sum*xhat3_mi)/static_cast<double>(DIM));
