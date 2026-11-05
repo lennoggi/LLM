@@ -153,7 +153,7 @@ int main() {
     /* Preallocate:
      * - The input vectors `x`, which change along the way during the forward
      *   due to layer normalization and skip connections
-     * - The input vectors `x2` after the second layer normalization step */
+     * - The input vectors `x2` after LN2 */
     std::vector<double> x(nxdim), x2(nxdim);
 
     // Query, key, and value matrices
@@ -195,7 +195,6 @@ int main() {
     // Helpers
     std::vector<double> probs(nx*nv);
     std::vector<double> dx3(nxdim);
-    std::vector<double> dx_scale3_m(DIM);
     std::vector<double> d_ffn_b2_m(DIM);
 
 
@@ -249,9 +248,9 @@ int main() {
         // TODO: dropout of 'x' without any skip connections
 
 
-        /* ----------------------
-         * Layer normalization #1
-         * ----------------------
+        /* ----------------------------
+         * Layer normalization #1 (LN1)
+         * ----------------------------
          * Rescale the each input embedding vector so that its components
          * average out to 0 and have variance 1, but then scale and shift them
          * by trainable parameters, to make training more stable.
@@ -351,9 +350,9 @@ int main() {
          *   ***** The input changes: x1 -> x1skip ***** */
         skip_conn_dropout(x, context, udist, gen);
 
-        /* ----------------------
-         * Layer normalization #2
-         * ----------------------
+        /* ----------------------------
+         * Layer normalization #2 (LN2)
+         * ----------------------------
          *   ***** The input changes: x1skip -> x2 *****
          * NOTE: save the inputs at this stage to avoid rebuilding them during
          *       the backward pass */
@@ -417,9 +416,9 @@ int main() {
          *   ***** The input changes: x2 -> x2skip ***** */
         skip_conn_dropout(x, ffn_out, udist, gen);
 
-        /* ----------------------
-         * Layer normalization #3
-         * ---------------------- */
+        /* ----------------------------
+         * Layer normalization #3 (LN3)
+         * ---------------------------- */
         layer_norm(x, scale3, shift3, xhat3, sigmas_inv3);
 
 
@@ -535,8 +534,7 @@ int main() {
          * - x3:         nx*DIM
          * - probs:      nx*nv
          * - d_logits_W: DIM*nv
-         * NOTE: `x` holds the input tokens after layer normalization #3, so it
-         *       really is `x3`
+         * NOTE: `x` holds the input tokens after LN3, so it really is `x3`
          * NOTE: `probs` should technically have dimensions (nx-1)*nv, but we
          *       allocate it as nx*nv and set its last row to zero to make use
          *       of cblas_dgemm */
@@ -571,9 +569,9 @@ int main() {
                 d_logits_b[v] += probs_mv;
             }
 
-            // Accumulate the loss' gradients wrt the post-FFN scale and shift
-            double dx_scale3_m_sum       = 0.0;
-            double dx_scale3_xhat3_m_sum = 0.0;
+            // Accumulate the loss' gradients wrt the LN3 scale and shift
+            double u3_m_sum       = 0.0;
+            double u3_xhat3_m_sum = 0.0;
 
             for (auto i = decltype(DIM){0}; i < DIM; ++i) {
                 const auto mi       = idx_m + i;
@@ -584,22 +582,25 @@ int main() {
                 d_shift3[i] += dx3_mi;
                 d_scale3[i] += dx3_mi*xhat3_mi;
 
-                const auto dx_scale3_mi = dx3_mi*scale3_i;
-                dx_scale3_m[i]          = dx_scale3_mi;
-                dx_scale3_m_sum        += dx_scale3_mi;
-                dx_scale3_xhat3_m_sum  += dx_scale3_mi*xhat3_mi;
+                const auto u3_mi = dx3_mi*scale3_i;
+                u3_m_sum        += u3_mi;
+                u3_xhat3_m_sum  += u3_mi*xhat3_mi;
             }
 
 
             /* Accumulate the loss' gradients wrt to the FFN weights and biases and
-             * the pre-FFN layer normalization scale and shift */
+             * the LN2 scale and shift */
             const auto sigma_inv3_m = sigmas_inv3[m];
 
             for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-                const auto xhat3_mi    = xhat3[idx_m + i];
-                const auto d_ffn_b2_mi = (dx_scale3_m[i]
-                    - (dx_scale3_m_sum + dx_scale3_xhat3_m_sum*xhat3_mi)/static_cast<double>(DIM)
-                    )*sigma_inv3_m;
+                const auto mi       = idx_m + i;
+                const auto dx3_mi   = dx3[mi];
+                const auto xhat3_mi = xhat3[mi];
+                const auto scale3_i = scale3[i];
+                const auto u3_mi    = dx3_mi*scale3_i;
+
+                const auto d_ffn_b2_mi = sigma_inv3_m*(
+                    u3_mi - (u3_m_sum + u3_xhat3_m_sum*xhat3_mi)/static_cast<double>(DIM));
 
                 d_ffn_b2_m[i] = d_ffn_b2_mi;
                 d_ffn_b2[i]  += d_ffn_b2_mi;
@@ -609,7 +610,7 @@ int main() {
                 }
 
                 d_shift2[i] += d_ffn_b2_mi;
-                d_scale2[i] += d_ffn_b2_mi*xhat2[idx_m + i];
+                d_scale2[i] += d_ffn_b2_mi*xhat2[mi];
             }
 
             for (auto r = decltype(dim_ffn_expanded){0}; r < dim_ffn_expanded; ++r) {
@@ -627,6 +628,15 @@ int main() {
                 }
             }
         }
+
+
+        // XXX XXX XXX XXX XXX XXX
+        // XXX XXX XXX XXX XXX XXX
+        // XXX XXX XXX XXX XXX XXX
+        // XXX: update all the other model parameters
+        // XXX XXX XXX XXX XXX XXX
+        // XXX XXX XXX XXX XXX XXX
+        // XXX XXX XXX XXX XXX XXX
 
 
         /* ----------------------------------------------------------
