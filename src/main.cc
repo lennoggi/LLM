@@ -195,7 +195,7 @@ int main() {
     // Helpers
     std::vector<double> probs(nx*nv);
     std::vector<double> dx3(nxdim);
-    std::vector<double> d_ffn_b2_m(DIM);
+    std::vector<double> dx2_m(DIM), dx2_skipconn_m(DIM);
 
 
     /* Write the loss function to file at every training iteration for logging
@@ -603,18 +603,17 @@ int main() {
                 const auto scale3_i = scale3[i];
                 const auto u3_mi    = dx3_mi*scale3_i;  // (*) HERE
 
-                const auto d_ffn_b2_mi = sigma_inv3_m*(
+                // Skip connection part of dL^m / dx2^m_i
+                const auto dx2_skipconn_mi = sigma_inv3_m*(
                     u3_mi - (u3_m_sum + u3_xhat3_m_sum*xhat3_mi)/static_cast<double>(DIM));
 
-                d_ffn_b2_m[i] = d_ffn_b2_mi;
-                d_ffn_b2[i]  += d_ffn_b2_mi;
+                dx2_skipconn_m[i] = dx2_skipconn_mi;
+                dx2_m[i]          = dx2_skipconn_mi;
+                d_ffn_b2[i]      += dx2_skipconn_mi;
 
                 for (auto r = decltype(dim_ffn_expanded){0}; r < dim_ffn_expanded; ++r) {
-                    d_ffn_W2[r*DIM + i] += d_ffn_b2_mi*ffn_h[idx_m_exp + r];
+                    d_ffn_W2[r*DIM + i] += dx2_skipconn_mi*ffn_h[idx_m_exp + r];
                 }
-
-                d_shift2[i] += d_ffn_b2_mi;
-                d_scale2[i] += d_ffn_b2_mi*xhat2[mi];
             }
 
             for (auto r = decltype(dim_ffn_expanded){0}; r < dim_ffn_expanded; ++r) {
@@ -622,14 +621,22 @@ int main() {
                 double d_ffn_b1_r = 0.0;
 
                 for (auto j = decltype(DIM){0}; j < DIM; ++j) {
-                    d_ffn_b1_r += d_ffn_b2_m[j]*ffn_W2[idx_r + j]*ffn_h_prime[idx_m_exp + r];
+                    d_ffn_b1_r += dx2_skipconn_m[j]*ffn_W2[idx_r + j];
                 }
 
+                d_ffn_b1_r  *= ffn_h_prime[idx_m_exp + r];
                 d_ffn_b1[r] += d_ffn_b1_r;
 
-                for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-                    d_ffn_W1[i*dim_ffn_expanded + r] += d_ffn_b1_r*x2[idx_m + i];
+                for (auto j = decltype(DIM){0}; j < DIM; ++j) {
+                    d_ffn_W1[j*dim_ffn_expanded + r] += d_ffn_b1_r*x2[idx_m + j];
+                    dx2_m[j]                         += d_ffn_b1_r*ffn_W1[j*dim_ffn_expanded + r];
                 }
+            }
+
+            for (auto i = decltype(DIM){0}; i < DIM; ++i) {
+                const auto dx2_mi = dx2_m[i];
+                d_shift2[i]      += dx2_mi;
+                d_scale2[i]      += dx2_mi*xhat2[idx_m + i];
             }
         }
 
