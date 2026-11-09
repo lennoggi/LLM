@@ -525,6 +525,12 @@ int main() {
             }
 
             probs[idx_m_vocab + next_input_id] -= 1.0;
+
+            // Accumulate the loss' gradient wrt to the logits' weights
+            for (auto v = decltype(nv){0}; v < nv; ++v) {
+                const auto probs_mv = probs[idx_m_vocab + v];
+                d_logits_b[v] += probs_mv;
+            }
         }
 
 
@@ -560,14 +566,7 @@ int main() {
          * ------------------- */
         for (auto m = decltype(nx){0}; m < nx - 1; ++m) {
             const auto idx_m       = m*DIM;
-            const auto idx_m_vocab = m*nv;
             const auto idx_m_exp   = m*dim_ffn_expanded;
-
-            // Accumulate the loss' gradient wrt to the logits' weights
-            for (auto v = decltype(nv){0}; v < nv; ++v) {
-                const auto probs_mv = probs[idx_m_vocab + v];
-                d_logits_b[v] += probs_mv;
-            }
 
             // Accumulate the loss' gradients wrt the LN3 scale and shift
             double u3_m_sum       = 0.0;
