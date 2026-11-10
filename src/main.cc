@@ -214,6 +214,7 @@ int main() {
     /* ========
      * Training
      * ======== */
+    constexpr double dim_inv      = 1.0/static_cast<double>(DIM);
     constexpr double sqrt_dim     = std::sqrt(static_cast<double>(DIM));
     constexpr double sqrt_dim_inv = 1.0/sqrt_dim;
 
@@ -604,7 +605,7 @@ int main() {
 
                 // Skip connection part of dL^m / dx2^m_i
                 const auto dx2_skipconn_mi = sigma_inv3_m*(
-                    u3_mi - (u3_m_sum + u3_xhat3_m_sum*xhat3_mi)/static_cast<double>(DIM));
+                    u3_mi - (u3_m_sum + u3_xhat3_m_sum*xhat3_mi)*dim_inv);
 
                 dx2_skipconn_m[i] = dx2_skipconn_mi;
                 dx2_m[i]          = dx2_skipconn_mi;
