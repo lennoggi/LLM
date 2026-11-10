@@ -193,9 +193,9 @@ int main() {
     std::vector<double> d_logits_b(nv);
 
     // Helpers
-    std::vector<double> probs(nx*nv);
-    std::vector<double> dx3(nxdim);
-    std::vector<double> dx2_m(DIM), dx2_skipconn_m(DIM);
+    std::vector<double> probs(nx*nv);        // dL/dLogits with last row = 0
+    std::vector<double> dx(nxdim);           // First dL/dx3, then dL/dx2 [skip connection path], then dL/dx2 [total] = dL/dx2 [skip connection path] + dL/dx2 [FFN path]
+    std::vector<double> dz(nxdim_expanded);  // dz^m_r = (dx2skip * ffn_W2^T)^m_r * ffn_h_prime^m_r
 
 
     /* Write the loss function to file at every training iteration for logging
@@ -480,14 +480,14 @@ int main() {
         fill(d_logits_b.begin(), d_logits_b.end(), 0.0);
 
 
-        /* -------------------
-         * Input token loop #1
-         * ------------------- */
+        /* ------------------------------------------------------
+         * 1. Compute the loss function and build
+         *    probs^m_v = dL^m / dlogits^m_v =
+         *  = softmax(logits)^m_v - delta_{v, v_next_input_token}
+         * ------------------------------------------------------ */
         for (auto m = decltype(nx){0}; m < nx - 1; ++m) {
             const auto idx_m_vocab = m*nv;
 
-            /* Build the log of the sum of the stabilized exponentials of all
-             * the logits for the current input token */
                   double *logits_m     = &logits[idx_m_vocab];
             const double  logits_m_max = *std::max_element(logits_m, logits_m + nv);
                   double  sum_exp_m    = 0.0;
@@ -535,9 +535,9 @@ int main() {
         }
 
 
-        /* -------------------------
-         * d_logits_W = x3^T * probs
-         * -------------------------
+        /* -------------------------------
+         * 2. dL/d_logits_W = x3^T * probs
+         * -------------------------------
          * - x3:         nx*DIM
          * - probs:      nx*nv
          * - d_logits_W: DIM*nv
@@ -551,31 +551,30 @@ int main() {
                     DIM, nv, nx, 1.0, x.data(), DIM, probs.data(), nv,
                     0.0, d_logits_W.data(), nv);
 
-        /* ------------------------
-         * dx3 = probs * logits_W^T
-         * ------------------------
+        /* -----------------------------------
+         * 3. dx = dL_dx3 = probs * logits_W^T
+         * -----------------------------------
          * - probs:    nx*nv
          * - logits_W: DIM*nv
-         * - dx3:      nx*DIM */
+         * - dx = dx3: nx*DIM */
         cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
                     nx, DIM, nv, 1.0, probs.data(), nv, logits_W.data(), nv,
-                    0.0, dx3.data(), DIM);
+                    0.0, dx.data(), DIM);
 
 
-        /* -------------------
-         * Input token loop #2
-         * ------------------- */
+        /* ---------------------------------------------------------------
+         * 4. Backward LN3, dL/d_ffn_b2, and dL/dx2 [skip connection path]
+	 * --------------------------------------------------------------- */
         for (auto m = decltype(nx){0}; m < nx - 1; ++m) {
             const auto idx_m       = m*DIM;
             const auto idx_m_exp   = m*dim_ffn_expanded;
 
-            // Accumulate the loss' gradients wrt the LN3 scale and shift
             double u3_m_sum       = 0.0;
             double u3_xhat3_m_sum = 0.0;
 
             for (auto i = decltype(DIM){0}; i < DIM; ++i) {
                 const auto mi       = idx_m + i;
-                const auto dx3_mi   = dx3[mi];
+                const auto dx3_mi   = dx[mi];
                 const auto xhat3_mi = xhat3[mi];
                 const auto scale3_i = scale3[i];
 
@@ -591,14 +590,11 @@ int main() {
                 u3_xhat3_m_sum  += u3_mi*xhat3_mi;
             }
 
-
-            /* Accumulate the loss' gradients wrt to the FFN weights and biases and
-             * the LN2 scale and shift */
             const auto sigma_inv3_m = sigmas_inv3[m];
 
             for (auto i = decltype(DIM){0}; i < DIM; ++i) {
                 const auto mi       = idx_m + i;
-                const auto dx3_mi   = dx3[mi];
+                const auto dx3_mi   = dx[mi];
                 const auto xhat3_mi = xhat3[mi];
                 const auto scale3_i = scale3[i];
                 const auto u3_mi    = dx3_mi*scale3_i;  // (*) HERE
@@ -607,38 +603,110 @@ int main() {
                 const auto dx2_skipconn_mi = sigma_inv3_m*(
                     u3_mi - (u3_m_sum + u3_xhat3_m_sum*xhat3_mi)*dim_inv);
 
-                dx2_skipconn_m[i] = dx2_skipconn_mi;
-                dx2_m[i]          = dx2_skipconn_mi;
-                d_ffn_b2[i]      += dx2_skipconn_mi;
-
-                for (auto r = decltype(dim_ffn_expanded){0}; r < dim_ffn_expanded; ++r) {
-                    d_ffn_W2[r*DIM + i] += dx2_skipconn_mi*ffn_h[idx_m_exp + r];
-                }
-            }
-
-            for (auto r = decltype(dim_ffn_expanded){0}; r < dim_ffn_expanded; ++r) {
-                const auto idx_r  = r*DIM;
-                double d_ffn_b1_r = 0.0;
-
-                for (auto j = decltype(DIM){0}; j < DIM; ++j) {
-                    d_ffn_b1_r += dx2_skipconn_m[j]*ffn_W2[idx_r + j];
-                }
-
-                d_ffn_b1_r  *= ffn_h_prime[idx_m_exp + r];
-                d_ffn_b1[r] += d_ffn_b1_r;
-
-                for (auto j = decltype(DIM){0}; j < DIM; ++j) {
-                    d_ffn_W1[j*dim_ffn_expanded + r] += d_ffn_b1_r*x2[idx_m + j];
-                    dx2_m[j]                         += d_ffn_b1_r*ffn_W1[j*dim_ffn_expanded + r];
-                }
-            }
-
-            for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-                const auto dx2_mi = dx2_m[i];
-                d_shift2[i]      += dx2_mi;
-                d_scale2[i]      += dx2_mi*xhat2[idx_m + i];
+                // NOTE: dx^m_i overwritten by dL^m / dx2skip^m_i
+                dx[mi]       = dx2_skipconn_mi;
+                d_ffn_b2[i] += dx2_skipconn_mi;
             }
         }
+
+
+        /* --------------------------------------------
+         * 5. dL/dFFN_W2 = d_ffn_W2 = ffn_h^T * dx2skip
+         * --------------------------------------------
+         * - ffn_h:        nx * dim_ffn_expanded  = nx * (FFN_EXPANSION_FACTOR * DIM)
+         * - dx = dx2skip: nx * DIM
+         * - d_ffn_W2:     dim_ffn_expanded * DIM = (FFN_EXPANSION_FACTOR * DIM) * DIM
+         * NOTE: dx now holds dx2skip (overwritten in the loop above) */
+        cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                    dim_ffn_expanded, DIM, nx, 1.0, ffn_h.data(), dim_ffn_expanded, dx.data(), DIM,
+                    0.0, d_ffn_W2.data(), DIM);
+
+
+        /* ------------------------------------------------------
+         * 6. dz^m_r = (dx2skip * ffn_W2^T)^m_r * ffn_h_prime^m_r
+         * ------------------------------------------------------
+         * - dx = dx2skip: nx * DIM
+         * - ffn_W2:       dim_ffn_expanded * DIM = (FFN_EXPANSION_FACTOR * DIM) * DIM
+         * - dz:           nx * dim_ffn_expanded  = nx * (FFN_EXPANSION_FACTOR * DIM)
+         * NOTE: dx now holds dx2skip (overwritten in the loop above) */
+        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                    nx, dim_ffn_expanded, DIM, 1.0, dx.data(), DIM, ffn_W2.data(), DIM,
+                    0.0, dz.data(), dim_ffn_expanded);
+
+        for (auto idx = decltype(nxdim_expanded){0}; idx < nxdim_expanded; ++idx) {
+            dz[idx] *= ffn_h_prime[idx];
+        }
+
+
+        /* ---------------------------
+         * 7. Backward FFN first layer
+         * --------------------------- */
+        for (auto m = decltype(nx){0}; m < nx - 1; ++m) {
+            const auto idx_m_exp = m*dim_ffn_expanded;
+            for (auto r = decltype(dim_ffn_expanded){0}; r < dim_ffn_expanded; ++r) {
+                d_ffn_b1[r] += dz[idx_m_exp + r];
+            }
+        }
+
+        /* ***** dL/dFFN_W1 = d_ffn_W1 = x2^T * dz *****
+         * - x2:       nx * DIM
+         * - dz:       nx * dim_ffn_expanded  = nx * (FFN_EXPANSION_FACTOR * DIM)
+         * - d_ffn_W1: DIM * dim_ffn_expanded */
+        cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                    DIM, dim_ffn_expanded, nx, 1.0, x2.data(), DIM, dz.data(), dim_ffn_expanded,
+                    0.0, d_ffn_W1.data(), dim_ffn_expanded);
+
+
+        /* ------------------------------------------------------------------
+         * dL/dx2 [total] = dL/dx2 [skip connection path] + dL/dx2 [FFN path]
+         * ------------------------------------------------------------------ */
+        /* ***** dL/dx2 [FFN path] = dz * ffn_W1^T *****
+         * - dz:             nx * dim_ffn_expanded = nx * (FFN_EXPANSION_FACTOR * DIM)
+         * - ffn_W1:        DIM * dim_ffn_expanded
+         * - dx = dx2 [FFN]: nx * DIM
+         * NOTE: dx now holds dL/dx2 [total], note `1.0` before `dx.data()` */
+        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                    nx, DIM, dim_ffn_expanded, 1.0, dz.data(), dim_ffn_expanded, ffn_W1.data(), dim_ffn_expanded,
+                    1.0, dx.data(), DIM);  // NOTE: `1.0` adds dz * ffn_W1^T to the old dx (dL/dx2 [skip connection path]) 
+
+
+        /* ---------------
+         * 9. Backward LN2
+         * --------------- */
+         // NOTE: dx now holds dL/dx2 [total]
+        for (auto m = decltype(nx){0}; m < nx - 1; ++m) {
+            const auto idx_m = m*DIM;
+            for (auto i = decltype(DIM){0}; i < DIM; ++i) {
+                const auto dx2_mi = dx[idx_m + i];
+                d_shift2[i] += dx2_mi;
+                d_scale2[i] += dx2_mi*xhat2[idx_m + i];
+            }
+        }
+
+
+//            for (auto r = decltype(dim_ffn_expanded){0}; r < dim_ffn_expanded; ++r) {
+//                const auto idx_r  = r*DIM;
+//                double d_ffn_b1_r = 0.0;
+//
+//                for (auto j = decltype(DIM){0}; j < DIM; ++j) {
+//                    d_ffn_b1_r += dx2_skipconn_m[j]*ffn_W2[idx_r + j];
+//                }
+//
+//                d_ffn_b1_r  *= ffn_h_prime[idx_m_exp + r];
+//                d_ffn_b1[r] += d_ffn_b1_r;
+//
+//                for (auto j = decltype(DIM){0}; j < DIM; ++j) {
+//                    d_ffn_W1[j*dim_ffn_expanded + r] += d_ffn_b1_r*x2[idx_m + j];
+//                    dx2_m[j]                         += d_ffn_b1_r*ffn_W1[j*dim_ffn_expanded + r];
+//                }
+//            }
+//
+//            for (auto i = decltype(DIM){0}; i < DIM; ++i) {
+//                const auto dx2_mi = dx2_m[i];
+//                d_shift2[i]      += dx2_mi;
+//                d_scale2[i]      += dx2_mi*xhat2[idx_m + i];
+//            }
+//        }
 
 
         // XXX XXX XXX XXX XXX XXX
