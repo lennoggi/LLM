@@ -566,9 +566,7 @@ int main() {
          * 4. Backward LN3, dL/d_ffn_b2, and dL/dx2 [skip connection path]
 	 * --------------------------------------------------------------- */
         for (auto m = decltype(nx){0}; m < nx - 1; ++m) {
-            const auto idx_m       = m*DIM;
-            const auto idx_m_exp   = m*dim_ffn_expanded;
-
+            const auto idx_m      = m*DIM;
             double u3_m_sum       = 0.0;
             double u3_xhat3_m_sum = 0.0;
 
