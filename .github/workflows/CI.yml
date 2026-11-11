@@ -14,7 +14,7 @@ jobs:
             - name: Install BLAS
               run:  |-
                     sudo apt update
-                    sudo apt install -y libblas-dev liblapack-dev
+                    sudo apt install -y libopenblas-dev liblapack-dev
             - name: Compile the code
               run:  ./build.sh
             - name: Run the code
