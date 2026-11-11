@@ -211,6 +211,26 @@ int main() {
               << "# Column 2: loss function averaged over all input tokens" << std::endl;
 
 
+    // Print OpenBLAS configuration info
+    std::cout << "INFO: OpenBLAS settings" << std::endl;
+    const auto openblas_parallel_mode = openblas_get_parallel();
+
+    if (openblas_parallel_mode == 0) {
+        std::cout << "OpenBLAS parallel mode: single-threaded" << std::endl;
+    } else if (openblas_parallel_mode == 1) {
+        std::cout << "OpenBLAS parallel mode: pthreads or native OS threads" << std::endl;
+    } else if (openblas_parallel_mode == 2) {
+        std::cout << "OpenBLAS parallel mode: OpenMP threads" << std::endl;
+    } else {
+        std::cout << "ERROR: unexpected OpenBLAS parallel mode ("
+                  << openblas_parallel_mode << ")" << std::endl;
+    }   
+
+    std::cout << "  OpenBLAS configuration: " << openblas_get_config()      << std::endl;
+    std::cout << "  Core architecture:      " << openblas_get_corename()    << std::endl;
+    std::cout << "  Number of threads:      " << openblas_get_num_threads() << std::endl;
+
+
     /* ========
      * Training
      * ======== */
