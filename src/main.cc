@@ -42,11 +42,15 @@ int main() {
         return 1;  // Not reached
     }
 
-    /* Initialize a vector representation ("embedding") of each token in the
-     * vocabulary with random numbers to be optimized during training */
-    const auto nv    = tokenizer.vocab_token2id.size();
-    const auto nvdim = nv*DIM;
-    std::vector<double> vocab_embedding(nvdim);
+    const auto nv = tokenizer.vocab_token2id.size();
+
+    // Matrix dimensions used repeatedly
+    constexpr auto dim_sq           = DIM*DIM;
+    constexpr auto dim_ffn_expanded = DIM*FFN_EXPANSION_FACTOR;
+    constexpr auto dim_ffn_weights  = DIM*dim_ffn_expanded;
+    const     auto nxdim            = nx*DIM;
+    const     auto nvdim            = nv*DIM;
+    const     auto nxnv             = nx*nv;
 
 
     /* -------------------------------
@@ -66,13 +70,17 @@ int main() {
 
     std::normal_distribution<double> ndist(0.0, 1.0/std::sqrt(static_cast<double>(DIM)));
 
+
+    /* Initialize a vector representation ("embedding") of each token in the
+     * vocabulary with random numbers to be optimized during training */
+    std::vector<double> vocab_embedding(nvdim);
+
     for (auto &el : vocab_embedding) {
         el = ndist(gen);
     }
 
 
     // Initialize the positional embedding vectors with random values
-    const auto nxdim = nx*DIM;
     std::vector<double> pos_embeddings(nxdim);
 
     for (auto &el : pos_embeddings) {
@@ -88,7 +96,6 @@ int main() {
 
 
     // Initialize the query, key, and value weight matrices with random values
-    constexpr auto dim_sq = DIM*DIM;
     std::vector<double> Wq(dim_sq), Wk(dim_sq), Wv(dim_sq);
 
     // Xavier/Glorot uniform distribution
@@ -118,9 +125,6 @@ int main() {
      * NOTE: think of ffn_W1 and ffn_W2 as a matrices with dimensions:
      *   - ffn_W1(DIM, DIM*FFN_EXPANSION_FACTOR)
      *   - ffn_W2(DIM*FFN_EXPANSION_FACTOR, DIM) */
-    constexpr auto dim_ffn_expanded = DIM*FFN_EXPANSION_FACTOR;
-    constexpr auto dim_ffn_weights  = DIM*dim_ffn_expanded;
-
     std::vector<double> ffn_W1(dim_ffn_weights),       ffn_W2(dim_ffn_weights);
     std::vector<double> ffn_b1(dim_ffn_expanded, 0.0), ffn_b2(DIM, 0.0);
 
@@ -150,17 +154,18 @@ int main() {
     /* ------------------
      * Preallocate memory
      * ------------------ */
-    /* Preallocate:
-     * - The input vectors `x`, which change along the way during the forward
-     *   due to layer normalization and skip connections
-     * - The input vectors `x2` after LN2 */
-    std::vector<double> x(nxdim), x2(nxdim);
+    /* - Input vectors `x`, which change along the way during the forward
+     *   pass due to layer normalization and skip connections
+     * - Input vectors `x1` after LN1
+     * - Input vectors `x2` after LN2 */
+    std::vector<double> x(nxdim), x1(nxdim), x2(nxdim);
 
     // Query, key, and value matrices
     std::vector<double> queries(nxdim), keys(nxdim), values(nxdim);
 
     // Attention and context matrices
-    std::vector<double> attention(nx*nx);
+    const size_t nxsq = nx*nx;
+    std::vector<double> attention(nxsq);
     std::vector<double> context(nxdim);
 
     // Layer normalization intermediate parameters
@@ -174,9 +179,33 @@ int main() {
     std::vector<double> ffn_out(nxdim);
 
     // Logits vectors
-    std::vector<double> logits(nx*nv);
+    std::vector<double> logits(nxnv);
+
+    // dL/d_logits with last row = 0
+    std::vector<double> probs(nxnv);
+
+    /* dx is overwritten several times during the backward pass:
+     * 1. dx = dL/dx3
+     * 2. dx = dL/dx2 [skip connection path]
+     * 3. dx = dL/dx2 [total] = dL/dx2 [skip connection path] + dL/dx2 [FFN path]
+     * 4. dx = dL/dx1 [total] = dL/dx1 [skip connection path] + dL/dx1 [FFN path] */
+    std::vector<double> dx(nxdim);
+
+    // dz^m_r = (dx2skip * ffn_W2^T)^m_r * ffn_h_prime^m_r
+    std::vector<double> dz(nxdim_expanded);
+
+    /* A = "attention". dA is overwritten during the backward pass:
+     * 1. dA = dL/dA
+     * 2. dA = dL/dS = dL/dA * dA/dS */
+    std::vector<double> dA(nxsq);
+
+    // dL/dQ (queries), dL/dK (keys), dL/dV (values)
+    std::vector<double> dQ(nxdim), dK(nxdim), dV(nxdim);
+
 
     // Loss' gradients wrt to the model's parameters
+    std::vector<double> dWq(dim_sq), dWk(dim_sq), dWv(dim_sq);
+
     std::vector<double> d_ffn_b1(dim_ffn_expanded);
     std::vector<double> d_ffn_W1(dim_ffn_weights);  // Matrix (DIM, dim_ffn_expanded)
 
@@ -191,11 +220,6 @@ int main() {
 
     std::vector<double> d_logits_W(nvdim);  // Matrix (DIM, nv)
     std::vector<double> d_logits_b(nv);
-
-    // Helpers
-    std::vector<double> probs(nx*nv);        // dL/dLogits with last row = 0
-    std::vector<double> dx(nxdim);           // First dL/dx3, then dL/dx2 [skip connection path], then dL/dx2 [total] = dL/dx2 [skip connection path] + dL/dx2 [FFN path]
-    std::vector<double> dz(nxdim_expanded);  // dz^m_r = (dx2skip * ffn_W2^T)^m_r * ffn_h_prime^m_r
 
 
     /* Write the loss function to file at every training iteration for logging
@@ -277,6 +301,7 @@ int main() {
          * by trainable parameters, to make training more stable.
          *   ***** The input changes: x -> x1 ***** */
         layer_norm(x, scale1, shift1, xhat1, sigmas_inv1);
+        x1 = x;
 
         /* ----------------
          * - queries = x*Wq
@@ -486,10 +511,7 @@ int main() {
         double loss = 0.0;
 
         fill(d_ffn_b1.begin(), d_ffn_b1.end(), 0.0);
-        fill(d_ffn_W1.begin(), d_ffn_W1.end(), 0.0);
-
         fill(d_ffn_b2.begin(), d_ffn_b2.end(), 0.0);
-        fill(d_ffn_W2.begin(), d_ffn_W2.end(), 0.0);
 
         fill(d_scale3.begin(), d_scale3.end(), 0.0);
         fill(d_shift3.begin(), d_shift3.end(), 0.0);
@@ -584,7 +606,7 @@ int main() {
 
         /* ---------------------------------------------------------------
          * 4. Backward LN3, dL/d_ffn_b2, and dL/dx2 [skip connection path]
-	 * --------------------------------------------------------------- */
+         * --------------------------------------------------------------- */
         for (auto m = decltype(nx){0}; m < nx - 1; ++m) {
             const auto idx_m      = m*DIM;
             double u3_m_sum       = 0.0;
@@ -594,7 +616,6 @@ int main() {
                 const auto mi       = idx_m + i;
                 const auto dx3_mi   = dx[mi];
                 const auto xhat3_mi = xhat3[mi];
-                const auto scale3_i = scale3[i];
 
                 d_shift3[i] += dx3_mi;
                 d_scale3[i] += dx3_mi*xhat3_mi;
@@ -602,8 +623,7 @@ int main() {
                 /* This could be saved to a buffer and reused in the next loop (*),
                  * but a single multiplication is probably cheaper than a memory
                  * access */
-                const auto u3_mi = dx3_mi*scale3_i;
-
+                const auto u3_mi = dx3_mi*scale3[i];
                 u3_m_sum        += u3_mi;
                 u3_xhat3_m_sum  += u3_mi*xhat3_mi;
             }
@@ -611,15 +631,12 @@ int main() {
             const auto sigma_inv3_m = sigmas_inv3[m];
 
             for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-                const auto mi       = idx_m + i;
-                const auto dx3_mi   = dx[mi];
-                const auto xhat3_mi = xhat3[mi];
-                const auto scale3_i = scale3[i];
-                const auto u3_mi    = dx3_mi*scale3_i;  // (*) HERE
+                const auto mi    = idx_m + i;
+                const auto u3_mi = dx[mi]*scale3[i];  // (*) HERE
 
                 // Skip connection part of dL^m / dx2^m_i
                 const auto dx2_skipconn_mi = sigma_inv3_m*(
-                    u3_mi - (u3_m_sum + u3_xhat3_m_sum*xhat3_mi)*dim_inv);
+                    u3_mi - (u3_m_sum + u3_xhat3_m_sum*xhat3[mi])*dim_inv);
 
                 // NOTE: dx^m_i overwritten by dL^m / dx2skip^m_i
                 dx[mi]       = dx2_skipconn_mi;
@@ -688,18 +705,131 @@ int main() {
                     1.0, dx.data(), DIM);  // NOTE: `1.0` adds dz * ffn_W1^T to the old dx (dL/dx2 [skip connection path]) 
 
 
-        /* ---------------
-         * 9. Backward LN2
-         * --------------- */
-         // NOTE: dx now holds dL/dx2 [total]
+        /* -------------------------------------------------
+         * 9. Backward LN2 and dL/dx1 [skip connection path]
+         * ------------------------------------------------- */
+        // NOTE: dx now holds dL/dx2 [total]
         for (auto m = decltype(nx){0}; m < nx - 1; ++m) {
-            const auto idx_m = m*DIM;
+            const auto idx_m      = m*DIM;
+            double u2_m_sum       = 0.0;
+            double u2_xhat2_m_sum = 0.0;
+
             for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-                const auto dx2_mi = dx[idx_m + i];
+                const auto mi       = idx_m + i;
+                const auto dx2_mi   = dx[mi];
+                const auto xhat2_mi = xhat2[mi];
+
                 d_shift2[i] += dx2_mi;
-                d_scale2[i] += dx2_mi*xhat2[idx_m + i];
+                d_scale2[i] += dx2_mi*xhat2_mi;
+
+                /* This could be saved to a buffer and reused in the next loop (**),
+                 * but a single multiplication is probably cheaper than a memory
+                 * access */
+                const auto u2_mi = dx2_mi*scale2[i];
+                u2_m_sum        += u2_mi;
+                u2_xhat2_m_sum  += u2_mi*xhat2_mi;
+            }
+
+            const auto sigma_inv2_m = sigmas_inv2[m];
+
+            for (auto i = decltype(DIM){0}; i < DIM; ++i) {
+                const auto mi    = idx_m + i;
+                const auto u2_mi = dx[mi]*scale2[i];  // (**) HERE
+
+                // Skip connection part of dL^m / dx1^m_i
+                const auto dx1_skipconn_mi = sigma_inv2_m*(
+                    u2_mi - (u2_m_sum + u2_xhat2_m_sum*xhat2[mi])*dim_inv);
+
+                // NOTE: dx^m_i overwritten by dL^m / dx1skip^m_i
+                dx[mi] = dx1_skipconn_mi;
             }
         }
+
+
+        /* -----------------------------------------------
+         * 10. Backward context
+         *     a. dL/dA = dx1 [skip connection path] * V^T
+         *     b. dL/dV = A^T * dx1 [skip connection path]
+         * -----------------------------------------------
+         * a. - dx1 [skip] = dx: nx * DIM
+         *    - V = values:      nx * DIM
+         *    - dL/dA = dA:      nx * nx
+         * b. - A = attention:   nx * nx
+         *    - dx1 [skip] = dx: nx * DIM
+         *    - dL/dV = dV:      nx * DIM */
+         cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                     nx, nx, DIM, 1.0, dx.data(), DIM, values.data(), DIM,
+                     0.0, dA.data(), nx);
+         cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                     nx, DIM, nx, 1.0, attention.data(), nx, dx.data(), DIM,
+                     0.0, dV.data(), DIM);
+
+
+        /* -----------------------------------------
+         * 11. Backward attention softmax, per token
+         *     dS = dL/dS = dL/dA * dA/dS
+         * -----------------------------------------
+         * dS[m,n] = / A[m,n]*(dA[m,n] - sum_{p<=m} A[m,p]*dA[m,p])  (n <= m)
+         *           | 0                                             (n > m)
+         * NOTE: dS overwrites dA */
+         for (auto m = decltype(nx){0}; m < nx; ++m) {
+             const auto    idx_m =  m*nx;
+             const double *A_m   = &attention[idx_m];
+                   double *dA_m  = &dA[idx_m];
+                   double  dot   =  0.0;
+
+             for (auto n = decltype(nx){0}; n <= m; ++n) {
+                 dot += A_m[n]*dA_m[n];
+             }
+
+             for (auto n = decltype(nx){0}; n <= m; ++n) {
+                 dA_m[n] = A_m[n]*(dA_m[n] - dot);
+             }
+
+             for (auto n = decltype(nx){m+1}; n < nx; ++n) {
+                 dA_m[n] = 0.0;
+             }
+         }
+
+
+        /* --------------------------------------------
+         * 12. Backward query and key matrices
+         *     a. dL/dQ = (1/sqrt(DIM)) *  dL/dS    * K
+         *     b. dL/dK = (1/sqrt(DIM)) * (dL/dS)^T * Q
+         * --------------------------------------------
+         * a. - dL/dS = dS = dA:   nx * nx
+         *    - K = keys:          nx * DIM
+         *    - dL/dQ = dQ:        nx * DIM
+         * b. - dL/dS = dS = dA:   nx * nx
+         *    - Q = queries:       nx * DIM
+         *    - dL/dK = dK:        nx * DIM
+         * NOTE: dA now holds dS (see 11.) */
+        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                    nx, DIM, nx, sqrt_dim_inv, dA.data(), nx, keys.data(), DIM,
+                    0.0, dQ.data(), DIM);
+        cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                    nx, DIM, nx, sqrt_dim_inv, dA.data(), nx, queries.data(), DIM,
+                    0.0, dK.data(), DIM);
+
+
+        /* ------------------------------------------
+         * 13. Backward query, key, and value weights
+         *     a. dL/dWq = x1^T * dQ
+         *     b. dL/dWk = x1^T * dK
+         *     c. dL/dWv = x1^T * dV
+         * ------------------------------------------
+         * - x1:             nx * DIM
+         * - dQ,  dK,  dV:   nx * DIM
+         * - dWq, dWk, dWv: DIM * DIM */
+        cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                    DIM, DIM, nx, 1.0, x1.data(), DIM, dQ.data(), DIM,
+                    0.0, dWq.data(), DIM);
+        cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                    DIM, DIM, nx, 1.0, x1.data(), DIM, dK.data(), DIM,
+                    0.0, dWk.data(), DIM);
+        cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                    DIM, DIM, nx, 1.0, x1.data(), DIM, dV.data(), DIM,
+                    0.0, dWv.data(), DIM);
 
 
 //            for (auto r = decltype(dim_ffn_expanded){0}; r < dim_ffn_expanded; ++r) {
@@ -741,6 +871,12 @@ int main() {
          * ---------------------------------------------------------- */
         loss *= loss_norm_fac;
         loss_file << it << "\t" << loss << std::endl;
+
+        for (auto idx = decltype(dim_sq){0}; idx < dim_sq; ++idx) {
+            Wq[idx] -= params_norm_fac*dWq[idx];
+            Wk[idx] -= params_norm_fac*dWk[idx];
+            Wv[idx] -= params_norm_fac*dWv[idx];
+        }
 
         for (auto r = decltype(dim_ffn_expanded){0}; r < dim_ffn_expanded; ++r) {
             ffn_b1[r] -= params_norm_fac*d_ffn_b1[r];
