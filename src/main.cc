@@ -73,9 +73,9 @@ int main() {
 
     /* Initialize a vector representation ("embedding") of each token in the
      * vocabulary with random numbers to be optimized during training */
-    std::vector<double> vocab_embedding(nvdim);
+    std::vector<double> vocab_embeddings(nvdim);
 
-    for (auto &el : vocab_embedding) {
+    for (auto &el : vocab_embeddings) {
         el = ndist(gen);
     }
 
@@ -146,7 +146,7 @@ int main() {
     for (auto v = decltype(nv){0}; v < nv; ++v) {
         const auto idx_v = v*DIM;
         for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-            logits_W[i*nv + v] = vocab_embedding[idx_v + i];
+            logits_W[i*nv + v] = vocab_embeddings[idx_v + i];
         }
     }
 
@@ -212,11 +212,13 @@ int main() {
     std::vector<double> d_ffn_b2(DIM);
     std::vector<double> d_ffn_W2(dim_ffn_weights);  // Matrix (dim_ffn_expanded, DIM)
 
-    std::vector<double> d_scale3(DIM);
-    std::vector<double> d_shift3(DIM);
-
+    std::vector<double> d_scale1(DIM);
     std::vector<double> d_scale2(DIM);
+    std::vector<double> d_scale3(DIM);
+
+    std::vector<double> d_shift1(DIM);
     std::vector<double> d_shift2(DIM);
+    std::vector<double> d_shift3(DIM);
 
     std::vector<double> d_logits_W(nvdim);  // Matrix (DIM, nv)
     std::vector<double> d_logits_b(nv);
@@ -262,8 +264,9 @@ int main() {
     constexpr double sqrt_dim     = std::sqrt(static_cast<double>(DIM));
     constexpr double sqrt_dim_inv = 1.0/sqrt_dim;
 
-    const double   loss_norm_fac = 1.0/static_cast<double>(nx-1);
-    const double params_norm_fac = loss_norm_fac*LEARNING_RATE;
+    const double   loss_norm_fac          = 1.0/static_cast<double>(nx-1);
+    const double params_norm_fac          = loss_norm_fac*LEARNING_RATE;
+    const double params_norm_fac_sqrt_dim = params_norm_fac*sqrt_dim;
 
     const auto training_start = std::chrono::steady_clock::now();
 
@@ -285,7 +288,7 @@ int main() {
 
             for (auto i = decltype(DIM){0}; i < DIM; ++i) {
                 const auto mi = idx_m + i;
-                x[mi] = sqrt_dim*vocab_embedding[idx_vocab + i] + pos_embeddings[mi];
+                x[mi] = sqrt_dim*vocab_embeddings[idx_vocab + i] + pos_embeddings[mi];
             }
         }
 
@@ -832,29 +835,73 @@ int main() {
                     0.0, dWv.data(), DIM);
 
 
-//            for (auto r = decltype(dim_ffn_expanded){0}; r < dim_ffn_expanded; ++r) {
-//                const auto idx_r  = r*DIM;
-//                double d_ffn_b1_r = 0.0;
-//
-//                for (auto j = decltype(DIM){0}; j < DIM; ++j) {
-//                    d_ffn_b1_r += dx2_skipconn_m[j]*ffn_W2[idx_r + j];
-//                }
-//
-//                d_ffn_b1_r  *= ffn_h_prime[idx_m_exp + r];
-//                d_ffn_b1[r] += d_ffn_b1_r;
-//
-//                for (auto j = decltype(DIM){0}; j < DIM; ++j) {
-//                    d_ffn_W1[j*dim_ffn_expanded + r] += d_ffn_b1_r*x2[idx_m + j];
-//                    dx2_m[j]                         += d_ffn_b1_r*ffn_W1[j*dim_ffn_expanded + r];
-//                }
-//            }
-//
-//            for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-//                const auto dx2_mi = dx2_m[i];
-//                d_shift2[i]      += dx2_mi;
-//                d_scale2[i]      += dx2_mi*xhat2[idx_m + i];
-//            }
-//        }
+        /* -----------------------------------------------------------------
+         * 14. Backward x1
+         *     dL/dx1 = dL/dx1 [skip] + dL/dx1 [Q] + dL/dx1 [K] + dL/dx1 [V]
+         *     a. dL/dx1 [Q] = dQ * Wq^T
+         *     b. dL/dx1 [K] = dK * Wk^T
+         *     c. dL/dx1 [V] = dV * Wv^T
+         * -----------------------------------------------------------------
+         * NOTE: dx now holds dL/dx1 [skip connection path] ("dx1 [skip]") and
+         *       the result (dx1 [total]) is accumulated back into dx
+         * - dx1 [skip] = dx:  nx * DIM
+         * - dQ, dK, dV:       nx * DIM
+         * - Wq, Wk, Wv:      DIM * DIM */
+        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                    nx, DIM, DIM, 1.0, dQ.data(), DIM, Wq.data(), DIM,
+                    1.0, dx.data(), DIM);  // 1.0 adds dQ * Wq^T to dx1 [skip]
+        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                    nx, DIM, DIM, 1.0, dK.data(), DIM, Wk.data(), DIM,
+                    1.0, dx.data(), DIM);
+        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                    nx, DIM, DIM, 1.0, dV.data(), DIM, Wv.data(), DIM,
+                    1.0, dx.data(), DIM);
+
+
+        /* ---------------------------
+         * 15. Backward LN1 and dL/dx0
+         * --------------------------- */
+        // NOTE: dx now holds dL/dx1 [total]
+        for (auto m = decltype(nx){0}; m < nx - 1; ++m) {
+            const auto idx_m = m*DIM;
+            double u1_m_sum       = 0.0;
+            double u1_xhat1_m_sum = 0.0;
+
+            for (auto i = decltype(DIM){0}; i < DIM; ++i) {
+                const auto mi       = idx_m + i;
+                const auto dx1_mi   = dx[mi];
+                const auto xhat1_mi = xhat1[mi];
+
+                d_shift1[i] += dx1_mi;
+                d_scale1[i] += dx1_mi*xhat1_mi;
+
+                /* This could be saved to a buffer and reused in the next loop (***),
+                 * but a single multiplication is probably cheaper than a memory
+                 * access */
+                const auto u1_mi = dx1_mi*scale1[i];
+                u1_m_sum        += u1_mi;
+                u1_xhat1_m_sum  += u1_mi*xhat1_mi;
+            }
+
+            const auto sigma_inv1_m = sigmas_inv1[m];
+
+            // ids_input[m] = v, i.e., the vocabulary's row index
+            const auto idx_vocab = ids_input[m]*DIM;
+
+            for (auto i = decltype(DIM){0}; i < DIM; ++i) {
+                const auto mi    = idx_m + i;
+                const auto u1_mi = dx[mi]*scale1[i];  // (***) HERE
+
+                const auto dx0_mi = sigma_inv1_m*(
+                    u1_mi - (u1_m_sum + u1_xhat1_m_sum*xhat1[mi])*dim_inv);
+
+                /* Update the vocabulary and positional embedding vectors
+                 * directly without extra buffers */
+                vocab_embeddings[idx_vocab + i] -= params_norm_fac_sqrt_dim*dx0_mi;
+                  pos_embeddings[mi]            -= params_norm_fac*dx0_mi;
+            }
+
+        }
 
 
         // XXX XXX XXX XXX XXX XXX
@@ -872,29 +919,6 @@ int main() {
         loss *= loss_norm_fac;
         loss_file << it << "\t" << loss << std::endl;
 
-        for (auto idx = decltype(dim_sq){0}; idx < dim_sq; ++idx) {
-            Wq[idx] -= params_norm_fac*dWq[idx];
-            Wk[idx] -= params_norm_fac*dWk[idx];
-            Wv[idx] -= params_norm_fac*dWv[idx];
-        }
-
-        for (auto r = decltype(dim_ffn_expanded){0}; r < dim_ffn_expanded; ++r) {
-            ffn_b1[r] -= params_norm_fac*d_ffn_b1[r];
-        }
-
-        for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-            ffn_b2[i] -= params_norm_fac*d_ffn_b2[i];
-            scale3[i] -= params_norm_fac*d_scale3[i];
-            shift3[i] -= params_norm_fac*d_shift3[i];
-            scale2[i] -= params_norm_fac*d_scale2[i];
-            shift2[i] -= params_norm_fac*d_shift2[i];
-        }
-
-        for (auto idx = decltype(dim_ffn_weights){0}; idx < dim_ffn_weights; ++idx) {
-            ffn_W1[idx] -= params_norm_fac*d_ffn_W1[idx];
-            ffn_W2[idx] -= params_norm_fac*d_ffn_W2[idx];
-        }
-
         for (auto v = decltype(nv){0}; v < nv; ++v) {
             logits_b[v] -= params_norm_fac*d_logits_b[v];
         }
@@ -903,14 +927,39 @@ int main() {
             logits_W[idx] -= params_norm_fac*d_logits_W[idx];
         }
 
-        // TODO: update all the other weights in the model
+        for (auto idx = decltype(dim_ffn_weights){0}; idx < dim_ffn_weights; ++idx) {
+            ffn_W1[idx] -= params_norm_fac*d_ffn_W1[idx];
+            ffn_W2[idx] -= params_norm_fac*d_ffn_W2[idx];
+        }
+
+        for (auto r = decltype(dim_ffn_expanded){0}; r < dim_ffn_expanded; ++r) {
+            ffn_b1[r] -= params_norm_fac*d_ffn_b1[r];
+        }
+
+        for (auto i = decltype(DIM){0}; i < DIM; ++i) {
+            ffn_b2[i] -= params_norm_fac*d_ffn_b2[i];
+
+            scale1[i] -= params_norm_fac*d_scale1[i];
+            scale2[i] -= params_norm_fac*d_scale2[i];
+            scale3[i] -= params_norm_fac*d_scale3[i];
+
+            shift1[i] -= params_norm_fac*d_shift1[i];
+            shift2[i] -= params_norm_fac*d_shift2[i];
+            shift3[i] -= params_norm_fac*d_shift3[i];
+        }
+
+        for (auto idx = decltype(dim_sq){0}; idx < dim_sq; ++idx) {
+            Wq[idx] -= params_norm_fac*dWq[idx];
+            Wk[idx] -= params_norm_fac*dWk[idx];
+            Wv[idx] -= params_norm_fac*dWv[idx];
+        }
 
         if constexpr (VERBOSE) {
             std::cout << "Training epoch " << it << " completed" << std::endl;
         }
 
-        // XXX
-        // Predict the next token
+        //// XXX
+        //// Predict the next token
         //const auto last_token_idx = nx*nv - nv;  // (nx-1)*nv
         //std::vector<double> last_logits(nv);
         //for (auto v = decltype(nv){0}; v < nv; ++v) {
@@ -919,7 +968,7 @@ int main() {
         //const auto new_id    = distance(last_logits.begin(), max_element(last_logits.begin(), last_logits.end()));
         //const auto new_token = tokenizer.decode(std::vector<size_t>{new_id});
         //std::cout << input_text << " " << new_token << std::endl;
-        // XXX
+        //// XXX
     }
 
 
