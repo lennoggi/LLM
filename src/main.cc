@@ -29,7 +29,7 @@ int main() {
     #elif (TOKENIZER == BPE)
     auto tokenizer = bpe_tokenizer_t(training_text, BPE_END_OF_WORD, BPE_MAX_VOCAB_SIZE);
     #else
-    #error "Invalid tokenizer"
+    #error "ERROR: Invalid tokenizer"
     return 1;  // Not reached
     #endif
 
@@ -229,7 +229,9 @@ int main() {
     std::ofstream loss_file(LOSS_FILE);
 
     if (not loss_file.is_open()) {
-        throw std::runtime_error("Failed to write to file 'Loss.asc'");
+        std::ostringstream err_ss;
+        err_ss << "Failed to write to file '" << LOSS_FILE << "'";
+        throw std::runtime_error(err_ss.str());
         return 1;  // Not reached
     }
 
@@ -516,11 +518,13 @@ int main() {
         fill(d_ffn_b1.begin(), d_ffn_b1.end(), 0.0);
         fill(d_ffn_b2.begin(), d_ffn_b2.end(), 0.0);
 
-        fill(d_scale3.begin(), d_scale3.end(), 0.0);
-        fill(d_shift3.begin(), d_shift3.end(), 0.0);
-
+        fill(d_scale1.begin(), d_scale1.end(), 0.0);
         fill(d_scale2.begin(), d_scale2.end(), 0.0);
+        fill(d_scale3.begin(), d_scale3.end(), 0.0);
+
+        fill(d_shift1.begin(), d_shift1.end(), 0.0);
         fill(d_shift2.begin(), d_shift2.end(), 0.0);
+        fill(d_shift3.begin(), d_shift3.end(), 0.0);
 
         fill(d_logits_b.begin(), d_logits_b.end(), 0.0);
 
