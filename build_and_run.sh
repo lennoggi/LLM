@@ -10,3 +10,4 @@ cmake ..
 make -j install
 cd ..
 rm -rf build
+./install/bin/llm

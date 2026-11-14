@@ -9,13 +9,9 @@ A large language model (LLM) built from scratch
 - A library providing the `cblas.h` header file and implementing the `cblas_dgemm()` function. The code has so far only been tested with OpenBLAS.
 
 ## Instructions
-- Build with
+- Build and run the code with
   ```
-  ./build.sh
-  ```
-- Run with
-  ```
-  ./install/bin/llm
+  ./build_and_run.sh
   ```
 
 ## References
