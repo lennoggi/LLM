@@ -129,7 +129,7 @@ int main() {
     std::vector<double> ffn_b1(dim_ffn_expanded, 0.0), ffn_b2(DIM, 0.0);
 
     // Xavier/Glorot normal distribution
-    constexpr auto xg_ffn_std = std::sqrt(6.0/(static_cast<double>(DIM) + static_cast<double>(dim_ffn_expanded)));
+    constexpr auto xg_ffn_std = std::sqrt(2.0/(static_cast<double>(DIM) + static_cast<double>(dim_ffn_expanded)));
     std::normal_distribution<double> xg_ffn_ndist(0.0, xg_ffn_std);
 
     for (auto idx = decltype(dim_ffn_weights){0}; idx < dim_ffn_weights; ++idx) {
@@ -979,7 +979,9 @@ int main() {
     const auto training_stop = std::chrono::steady_clock::now();
     const std::chrono::duration<double> training_time_s = training_stop - training_start;
 
-    std::cout << "INFO: all done. Training took " << training_time_s.count() << " s." << std::endl;
+    std::cout << "INFO: All done" << std::endl
+              << "INFO: Training took " << training_time_s.count() << " s" << std::endl
+              << "INFO: Loss function written to file '" LOSS_FILE << "'" << std::endl;
 
 
 
