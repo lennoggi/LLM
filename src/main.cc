@@ -138,15 +138,16 @@ int main() {
     }
 
 
-    /* Initialize the logits weights to the vocabulary embedding and the biases
-     * to zero */
-    std::vector<double> logits_W(nvdim);  // Matrix (DIM, nv)
+    /* If weight tying is active, use the vocabulary embedding as the logits
+     * weights; otherwise, initialize the logits weights to random values.
+     * Regardless, set the logits biases to zero. */
+    std::vector<double> logits_W;
     std::vector<double> logits_b(nv, 0.0);
 
-    for (auto v = decltype(nv){0}; v < nv; ++v) {
-        const auto idx_v = v*DIM;
-        for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-            logits_W[i*nv + v] = vocab_embeddings[idx_v + i];
+    if constexpr (not WEIGHT_TYING) {
+        logits_W.resize(nvdim);  // Matrix (DIM, nv)
+        for (auto &el : logits_W) {
+            el = ndist(gen);
         }
     }
 
@@ -220,7 +221,7 @@ int main() {
     std::vector<double> d_shift2(DIM);
     std::vector<double> d_shift3(DIM);
 
-    std::vector<double> d_logits_W(nvdim);  // Matrix (DIM, nv)
+    std::vector<double> d_logits_W(nvdim);  // Matrix (DIM, nv) without weight tying or (nv, DIM) with it
     std::vector<double> d_logits_b(nv);
 
 
@@ -473,11 +474,12 @@ int main() {
         layer_norm(x, scale3, shift3, xhat3, sigmas_inv3);
 
 
-        /* ------------------------------------------------
+        /* -------------------------------------------------------------
          * logits = x*logits_W + / [logits_b] \ |
          *                       | [logits_b] | | nv times
          *                       \ [logits_b] / |
-         * ------------------------------------------------
+         * NOTE: logits_W = vocab_embeddings^T if weight tying is active
+         * -------------------------------------------------------------
          * - x:        nx*DIM
          * - logits_W: DIM*nv
          * - logits:   nx*nv */
@@ -485,9 +487,15 @@ int main() {
             std::copy(logits_b.begin(), logits_b.end(), logits.begin() + m*nv);
         }
 
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
-            nx, nv, DIM, 1.0, x.data(), DIM, logits_W.data(), nv,
-            1.0, logits.data(), nv);
+        if constexpr (WEIGHT_TYING) {
+            cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                nx, nv, DIM, 1.0, x.data(), DIM, vocab_embeddings.data(), DIM,
+                1.0, logits.data(), nv);
+        } else {
+            cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                nx, nv, DIM, 1.0, x.data(), DIM, logits_W.data(), nv,
+                1.0, logits.data(), nv);
+        }
 
 
         // XXX XXX XXX XXX XXX XXX
@@ -584,31 +592,48 @@ int main() {
         }
 
 
-        /* -------------------------------
-         * 2. dL/d_logits_W = x3^T * probs
-         * -------------------------------
+        /* -------------------------------------------------------------
+         * 2. Without weight tying: dL/d_logits_W         = x3^T * probs
+         *    With    weight tying: dL/d_vocab_embeddings = probs^T * x3
+         * -------------------------------------------------------------
          * - x3:         nx*DIM
          * - probs:      nx*nv
-         * - d_logits_W: DIM*nv
+         * - d_logits_W: DIM*nv without weight tying, nv*DIM otherwise
          * NOTE: `x` holds the input tokens after LN3, so it really is `x3`
          * NOTE: `probs` should technically have dimensions (nx-1)*nv, but we
          *       allocate it as nx*nv and set its last row to zero to make use
-         *       of cblas_dgemm */
+         *       of cblas_dgemm
+         * NOTE: d_logits_W is really "d_vocab_embeddings" if weight tying is
+         *       active */
         std::fill(probs.begin() + (nx-1)*nv, probs.end(), 0.0);
 
-        cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
-                    DIM, nv, nx, 1.0, x.data(), DIM, probs.data(), nv,
-                    0.0, d_logits_W.data(), nv);
+        if constexpr (WEIGHT_TYING) {
+            cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                        nv, DIM, nx, 1.0, probs.data(), nv, x.data(), DIM,
+                        0.0, d_logits_W.data(), DIM);
+        } else {
+            cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                        DIM, nv, nx, 1.0, x.data(), DIM, probs.data(), nv,
+                        0.0, d_logits_W.data(), nv);
+        }
+
 
         /* -----------------------------------
          * 3. dx = dL_dx3 = probs * logits_W^T
          * -----------------------------------
          * - probs:    nx*nv
          * - logits_W: DIM*nv
-         * - dx = dx3: nx*DIM */
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
-                    nx, DIM, nv, 1.0, probs.data(), nv, logits_W.data(), nv,
-                    0.0, dx.data(), DIM);
+         * - dx = dx3: nx*DIM
+         * NOTE: logits_W = vocab_embeddings^T if weight tying is active */
+        if constexpr (WEIGHT_TYING) {
+            cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                        nx, DIM, nv, 1.0, probs.data(), nv, vocab_embeddings.data(), DIM,
+                        0.0, dx.data(), DIM);
+        } else {
+            cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                        nx, DIM, nv, 1.0, probs.data(), nv, logits_W.data(), nv,
+                        0.0, dx.data(), DIM);
+        }
 
 
         /* ---------------------------------------------------------------
@@ -908,15 +933,6 @@ int main() {
         }
 
 
-        // XXX XXX XXX XXX XXX XXX
-        // XXX XXX XXX XXX XXX XXX
-        // XXX XXX XXX XXX XXX XXX
-        // XXX: update all the other model parameters
-        // XXX XXX XXX XXX XXX XXX
-        // XXX XXX XXX XXX XXX XXX
-        // XXX XXX XXX XXX XXX XXX
-
-
         /* ----------------------------------------------------------
          * Compute the average loss and update the model's parameters
          * ---------------------------------------------------------- */
@@ -927,8 +943,14 @@ int main() {
             logits_b[v] -= params_norm_fac*d_logits_b[v];
         }
 
-        for (auto idx = decltype(nvdim){0}; idx < nvdim; ++idx) {
-            logits_W[idx] -= params_norm_fac*d_logits_W[idx];
+        if constexpr (WEIGHT_TYING) {
+            for (auto idx = decltype(nvdim){0}; idx < nvdim; ++idx) {
+                vocab_embeddings[idx] -= params_norm_fac*d_logits_W[idx];
+            }
+        } else {
+            for (auto idx = decltype(nvdim){0}; idx < nvdim; ++idx) {
+                logits_W[idx] -= params_norm_fac*d_logits_W[idx];
+            }
         }
 
         for (auto idx = decltype(dim_ffn_weights){0}; idx < dim_ffn_weights; ++idx) {

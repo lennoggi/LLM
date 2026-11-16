@@ -45,6 +45,12 @@ constexpr inline size_t BPE_MAX_VOCAB_SIZE = 200;
 #define BPE_END_OF_WORD "@"
 
 
+/* ----------------------------------------
+ * Number of training iterations ("epochs")
+ * ---------------------------------------- */
+constexpr inline size_t NTRAIN = 10000;
+
+
 /* -------------------------
  * Token embedding dimension
  * ------------------------- */
@@ -55,6 +61,12 @@ constexpr inline size_t DIM = 5;
  * activation function used after the attention layer
  * ------------------------------------------------------------------------ */
 constexpr inline size_t FFN_EXPANSION_FACTOR = 4;
+
+/* --------------------------------------------------------------------------
+ * If true, the model uses the vector embedding matrix as the logits weights.
+ * TODO: comment on pros and cons
+ * -------------------------------------------------------------------------- */
+constexpr inline bool WEIGHT_TYING = false;
 
 
 /* -----------------------------------------------------------------------------
@@ -67,22 +79,16 @@ constexpr inline size_t FFN_EXPANSION_FACTOR = 4;
 constexpr inline long long RANDOM_SEED = 123;
 //constexpr inline long long RANDOM_SEED = -1;
 
-/* ----------------------------------------
- * Number of training iterations ("epochs")
- * ---------------------------------------- */
-constexpr inline size_t NTRAIN = 10000;
-
 /* -------------------------------------------------------------
  * Learning rate regulating the strength of the gradient descent
  * ------------------------------------------------------------- */
 constexpr inline double LEARNING_RATE = 0.02;
 
-
-/* --------------------------------------------------------------------------
- * Set the variance of the elements of a token embedding vector to this small
- * value if that variance is exactly zero
- * -------------------------------------------------------------------------- */
-constexpr inline double VAR_TINY = 1.e-05;
+/* ----------------------------------------------------------------
+ * Regularize the variance of a token embedding vector during layer
+ * normalization
+ * ---------------------------------------------------------------- */
+constexpr inline double LN_EPSILON = 1.e-05;
 
 /* ----------------------------------------------------------------------------
  * Probability of dropout, i.e., of randomly setting to zero some of the
@@ -93,12 +99,6 @@ constexpr inline double VAR_TINY = 1.e-05;
 //constexpr inline double DROPOUT_PROB = -1.0;
 //constexpr inline double DROPOUT_PROB = 0.1;
 constexpr inline double DROPOUT_PROB = 0.0;
-
-/* --------------------------------------------------------------
- * Small tolerance value used to stabilize the calculation of the
- * pre-final-layer-normalization, normalized input values
- * -------------------------------------------------------------- */
-constexpr inline double TOLERANCE = 1.e-12;
 
 /* -----------------------------------------------------------------------------
  * Context size, i.e., the number of token IDs used to predict the next token ID

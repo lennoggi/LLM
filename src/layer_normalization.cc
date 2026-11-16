@@ -70,7 +70,7 @@ void layer_norm(      std::vector<double> &x,
          *   slightly negative due to floating point rounding in the Welford
          *   loop above. */
         sum_diffs = std::max(0.0, sum_diffs);
-        const auto sigma_inv = std::sqrt(static_cast<double>(dim)/(sum_diffs + VAR_TINY));
+        const auto sigma_inv = std::sqrt(static_cast<double>(dim)/(sum_diffs + LN_EPSILON));
         sigmas_inv[m] = sigma_inv;
 
         for (auto i = decltype(dim){0}; i < dim; ++i) {
