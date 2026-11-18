@@ -22,7 +22,9 @@ int main() {
      * Text encoding
      * ------------- */
     const auto training_text = file_to_string(TRAINING_FILE);
-    const auto    input_text = file_to_string(INPUT_FILE);
+
+    // TODO: use this as the prompt
+    //const auto input_text = file_to_string(INPUT_FILE);
 
     #if (TOKENIZER == WORD)
     auto tokenizer = word_tokenizer_t(training_text);
@@ -33,29 +35,48 @@ int main() {
     return 1;  // Not reached
     #endif
 
-    // Encode the input text into token IDs
-    const auto &ids_input = tokenizer.encode(input_text);
-    const auto nx = ids_input.size();
+    // Encode the training text into token IDs
+    const auto &ids_train = tokenizer.encode(training_text);
+    const auto nids_train = ids_train.size();
+    constexpr auto cw     = CONTEXT_WINDOW;  // Just a handy alias
 
-    if (nx < 2) {
-        throw std::runtime_error("Need at least two input tokens for the cross-entropy loss calculation to be meaningful and successful");
+    if (nids_train < cw) {
+        throw std::runtime_error("ERROR: Training text has fewer tokens than CONTEXT_WINDOW");
         return 1;  // Not reached
     }
 
     const auto nv = tokenizer.vocab_token2id.size();
 
-    // Matrix dimensions used repeatedly
+
+    /* -------------------------
+     * Constants used repeatedly
+     * ------------------------- */
+    constexpr auto cwsq             = cw*cw;
     constexpr auto dim_sq           = DIM*DIM;
     constexpr auto dim_ffn_expanded = DIM*FFN_EXPANSION_FACTOR;
     constexpr auto dim_ffn_weights  = DIM*dim_ffn_expanded;
-    const     auto nxdim            = nx*DIM;
+    constexpr auto cwdim            = cw*DIM;
+    constexpr auto cwdim_expanded   = cw*dim_ffn_expanded;
     const     auto nvdim            = nv*DIM;
-    const     auto nxnv             = nx*nv;
+    const     auto cwnv             = cw*nv;
 
 
     /* -------------------------------
      * Initialize learnable parameters
      * ------------------------------- */
+    // Model parameters count
+    const auto nparams =
+        nvdim                      +  // vocab_embeddings
+        cwdim                      +  // pos_embeddings
+        6*DIM                      +  // LN scale1/2/3, shift1/2/3
+        3*dim_sq                   +  // Wq, Wk, Wv
+        2*dim_ffn_weights          +  // ffn_W1, ffn_W2
+        dim_ffn_expanded + DIM     +  // ffn_b1, ffn_b2
+        (WEIGHT_TYING ? 0 : nvdim) +  // logits_W
+        nv;                           // logits_b
+
+    std::cout << "INFO: the model has " << nparams << " parameters" << std::endl;
+
     std::mt19937 gen;
 
     if constexpr (RANDOM_SEED >= 0) {
@@ -70,30 +91,24 @@ int main() {
 
     std::normal_distribution<double> ndist(0.0, 1.0/std::sqrt(static_cast<double>(DIM)));
 
-
     /* Initialize a vector representation ("embedding") of each token in the
      * vocabulary with random numbers to be optimized during training */
     std::vector<double> vocab_embeddings(nvdim);
-
     for (auto &el : vocab_embeddings) {
         el = ndist(gen);
     }
 
-
     // Initialize the positional embedding vectors with random values
-    std::vector<double> pos_embeddings(nxdim);
-
+    std::vector<double> pos_embeddings(cwdim);
     for (auto &el : pos_embeddings) {
         el = ndist(gen);
     }
-
 
     /* Initialize the three layer normalization (LN) scale and shift vectors to
      * 1's and 0's, respectively. The three LN steps are: */
     std::vector<double> scale1(DIM, 1.0), shift1(DIM, 0.0);  // LN before the attention block
     std::vector<double> scale2(DIM, 1.0), shift2(DIM, 0.0);  // LN before the feed-forward neural network (FFN)
     std::vector<double> scale3(DIM, 1.0), shift3(DIM, 0.0);  // LN before predicting the new token
-
 
     // Initialize the query, key, and value weight matrices with random values
     std::vector<double> Wq(dim_sq), Wk(dim_sq), Wv(dim_sq);
@@ -155,53 +170,52 @@ int main() {
     /* ------------------
      * Preallocate memory
      * ------------------ */
-    /* - Input vectors `x`, which change along the way during the forward
-     *   pass due to layer normalization and skip connections
-     * - Input vectors `x1` after LN1
-     * - Input vectors `x2` after LN2 */
-    std::vector<double> x(nxdim), x1(nxdim), x2(nxdim);
+    /* - Embedding vectors `x` for the training sequence. They change along the
+     *   way during the forward pass due to layer normalization and skip
+     *   connections.
+     * - Embedding vectors `x1` after LN1
+     * - Embedding vectors `x2` after LN2 */
+    std::vector<double> x(cwdim), x1(cwdim), x2(cwdim);  // Matrices (cw, DIM)
 
     // Query, key, and value matrices
-    std::vector<double> queries(nxdim), keys(nxdim), values(nxdim);
+    std::vector<double> queries(cwdim), keys(cwdim), values(cwdim);
 
     // Attention and context matrices
-    const size_t nxsq = nx*nx;
-    std::vector<double> attention(nxsq);
-    std::vector<double> context(nxdim);
+    std::vector<double> attention(cwsq);
+    std::vector<double> context(cwdim);
 
     // Layer normalization intermediate parameters
-    std::vector<double> xhat1(nxdim), sigmas_inv1(nx);  // LN before the attention block
-    std::vector<double> xhat2(nxdim), sigmas_inv2(nx);  // LN before the feed-forward neural network (FFN)
-    std::vector<double> xhat3(nxdim), sigmas_inv3(nx);  // LN before predicting the new token
+    std::vector<double> xhat1(cwdim), sigmas_inv1(cw);  // LN before the attention block
+    std::vector<double> xhat2(cwdim), sigmas_inv2(cw);  // LN before the feed-forward neural network (FFN)
+    std::vector<double> xhat3(cwdim), sigmas_inv3(cw);  // LN before predicting the new token
 
     // FFN hidden and output layers
-    const auto nxdim_expanded = nx*dim_ffn_expanded;
-    std::vector<double> ffn_h(nxdim_expanded), ffn_h_prime(nxdim_expanded);
-    std::vector<double> ffn_out(nxdim);
+    std::vector<double> ffn_h(cwdim_expanded), ffn_h_prime(cwdim_expanded);
+    std::vector<double> ffn_out(cwdim);
 
     // Logits vectors
-    std::vector<double> logits(nxnv);
+    std::vector<double> logits(cwnv);
 
     // dL/d_logits with last row = 0
-    std::vector<double> probs(nxnv);
+    std::vector<double> probs(cwnv);
 
     /* dx is overwritten several times during the backward pass:
      * 1. dx = dL/dx3
      * 2. dx = dL/dx2 [skip connection path]
      * 3. dx = dL/dx2 [total] = dL/dx2 [skip connection path] + dL/dx2 [FFN path]
      * 4. dx = dL/dx1 [total] = dL/dx1 [skip connection path] + dL/dx1 [FFN path] */
-    std::vector<double> dx(nxdim);
+    std::vector<double> dx(cwdim);
 
     // dz^m_r = (dx2skip * ffn_W2^T)^m_r * ffn_h_prime^m_r
-    std::vector<double> dz(nxdim_expanded);
+    std::vector<double> dz(cwdim_expanded);
 
     /* A = "attention". dA is overwritten during the backward pass:
      * 1. dA = dL/dA
      * 2. dA = dL/dS = dL/dA * dA/dS */
-    std::vector<double> dA(nxsq);
+    std::vector<double> dA(cwsq);
 
     // dL/dQ (queries), dL/dK (keys), dL/dV (values)
-    std::vector<double> dQ(nxdim), dK(nxdim), dV(nxdim);
+    std::vector<double> dQ(cwdim), dK(cwdim), dV(cwdim);
 
 
     // Loss' gradients wrt to the model's parameters
@@ -245,757 +259,798 @@ int main() {
     const auto openblas_parallel_mode = openblas_get_parallel();
 
     if (openblas_parallel_mode == 0) {
-        std::cout << "OpenBLAS parallel mode: single-threaded" << std::endl;
+        std::cout << "      - OpenBLAS parallel mode: single-threaded" << std::endl;
     } else if (openblas_parallel_mode == 1) {
-        std::cout << "OpenBLAS parallel mode: pthreads or native OS threads" << std::endl;
+        std::cout << "      - OpenBLAS parallel mode: pthreads or native OS threads" << std::endl;
     } else if (openblas_parallel_mode == 2) {
-        std::cout << "OpenBLAS parallel mode: OpenMP threads" << std::endl;
+        std::cout << "      - OpenBLAS parallel mode: OpenMP threads" << std::endl;
     } else {
         std::cout << "ERROR: unexpected OpenBLAS parallel mode ("
                   << openblas_parallel_mode << ")" << std::endl;
     }   
 
-    std::cout << "  OpenBLAS configuration: " << openblas_get_config()      << std::endl;
-    std::cout << "  Core architecture:      " << openblas_get_corename()    << std::endl;
-    std::cout << "  Number of threads:      " << openblas_get_num_threads() << std::endl;
+    std::cout << "      - OpenBLAS configuration: " << openblas_get_config()      << std::endl;
+    std::cout << "      - Core architecture:      " << openblas_get_corename()    << std::endl;
+    std::cout << "      - Number of threads:      " << openblas_get_num_threads() << std::endl;
 
 
     /* ========
      * Training
      * ======== */
+    /* Build a vector storing the start ids of all the training sequences,
+     * where each "regular" sequence is cw tokens long. If the last regular
+     * window stops short of the end of the training text, add one full-CW
+     * window aligned with the end of the text. Note that this effectively sets
+     * a smaller stride for the last sequence: not a big deal.
+     * EXAMPLE: N = 20, cw = 6, stride = 6/2 = 3
+     *   Training IDs:  +  +  +  +  +  +  +  +  +  +  +  +  +  +  +  +  +  +  +  +
+     *   Indices:       0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19
+     *   Start indices: +        +        +        +        +     *
+     *                  0        1        2        3       *4*    5: extra sequence
+     *   Last full-cw sequence index: (N - cw)/stride = (20-6)/3 = 4
+     *   Number of full-CW sequences = 4 + 1 = 5  // nwindows_fullcw */
+    const size_t nwindows_fullcw = (nids_train - cw)/CONTEXT_STRIDE + 1;
+    std::vector<size_t> start_ids_train(nwindows_fullcw);
+
+    for (size_t w = 0; w < nwindows_fullcw; ++w) {
+        start_ids_train[w] = w*CONTEXT_STRIDE;
+    }
+
+    if (start_ids_train.back() + cw < nids_train) {
+        start_ids_train.push_back(nids_train - cw);
+    }
+
+
+    /* ----------
+     * Epoch loop
+     * ---------- */
     constexpr double dim_inv      = 1.0/static_cast<double>(DIM);
     constexpr double sqrt_dim     = std::sqrt(static_cast<double>(DIM));
     constexpr double sqrt_dim_inv = 1.0/sqrt_dim;
 
-    const double   loss_norm_fac          = 1.0/static_cast<double>(nx-1);
+    const double   loss_norm_fac          = 1.0/static_cast<double>((cw-1)*start_ids_train.size());
     const double params_norm_fac          = loss_norm_fac*LEARNING_RATE;
     const double params_norm_fac_sqrt_dim = params_norm_fac*sqrt_dim;
 
+    constexpr double sqrt_2_over_pi = std::sqrt(2.0/M_PI);
+    constexpr double gelu_a         = 0.044715;
+
     const auto training_start = std::chrono::steady_clock::now();
 
-    for (auto it = decltype(NTRAIN){0}; it < NTRAIN; ++it) {
-        /* ************
-         * Forward pass
-         * ************ */
-        /* --------------------------
-         * Build the vector embedding
-         * --------------------------
-         * Map each input token ID into the corresponding embedding vector
-         * (scaled by sqrt(DIM) to keep magnitudes consistent) and add the
-         * corresponding positional encoding vectors */
-        for (auto m = decltype(nx){0}; m < nx; ++m) {
-            const auto idx_m    = m*DIM;
-            const auto id_input = ids_input[m];
-            assert(id_input < nv);
-            const auto idx_vocab = id_input*DIM;
+    for (auto epoch = decltype(NEPOCHS){0}; epoch < NEPOCHS; ++epoch) {
+        /* Randomly shuffle the training sequences to improve the generalization
+         * capabilities of the model */
+        std::shuffle(start_ids_train.begin(), start_ids_train.end(), gen);
 
-            for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-                const auto mi = idx_m + i;
-                x[mi] = sqrt_dim*vocab_embeddings[idx_vocab + i] + pos_embeddings[mi];
-            }
-        }
+        double epoch_loss = 0.0;
 
+        for (const auto &s : start_ids_train) {
+            const auto *ids_train_shifted = &ids_train[s];
 
-        // TODO: dropout of 'x' without any skip connections
+            /* ************
+             * Forward pass
+             * ************ */
+            /* --------------------------
+             * Build the vector embedding
+             * --------------------------
+             * Map each training token ID withing the current window into the
+             * corresponding embedding vector (scaled by sqrt(DIM) to keep
+             * magnitudes consistent) and add the corresponding positional
+             * encoding vectors */
+            for (auto m = decltype(cw){0}; m < cw; ++m) {
+                const auto idx_m    = m*DIM;
+                const auto token_id = ids_train_shifted[m];
+                assert(token_id < nv);
+                const auto idx_vocab = token_id*DIM;
 
-
-        /* ----------------------------
-         * Layer normalization #1 (LN1)
-         * ----------------------------
-         * Rescale the each input embedding vector so that its components
-         * average out to 0 and have variance 1, but then scale and shift them
-         * by trainable parameters, to make training more stable.
-         *   ***** The input changes: x -> x1 ***** */
-        layer_norm(x, scale1, shift1, xhat1, sigmas_inv1);
-        x1 = x;
-
-        /* ----------------
-         * - queries = x*Wq
-         * -    keys = x*Wk
-         * -  values = x*Wv
-         * ----------------
-         * - x:          nx*DIM
-         * - Wq, Wk, Wv: DIM*DIM
-         * - queries, keys, values: nx*DIM */
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
-            nx, DIM, DIM, 1.0, x.data(), DIM, Wq.data(), DIM,
-            0.0, queries.data(), DIM);
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
-            nx, DIM, DIM, 1.0, x.data(), DIM, Wk.data(), DIM,
-            0.0, keys.data(), DIM);
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
-            nx, DIM, DIM, 1.0, x.data(), DIM, Wv.data(), DIM,
-            0.0, values.data(), DIM);
-
-        /* --------------------------------------------
-         * attention = (1/sqrt(DIM)) * queries * keys^T
-         * --------------------------------------------
-         * - queries:   nx*DIM
-         * - keys^T:    DIM*nx
-         * - attention: nx*nx
-         * TODO: allow for multi-head attention; need to swap
-         *   nds_input<->nheads to allow parallelization by head. Then the
-         *   normalization factor will become 1/sqrt(DIM_OUT/nheads) */
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
-            nx, nx, DIM, sqrt_dim_inv, queries.data(), DIM, keys.data(), DIM,
-            0.0, attention.data(), nx);
-
-
-        /* ----------------------------------------------------
-         * Causal attention + softmax normalization (in one go)
-         * ----------------------------------------------------
-         * 1. Causal attention: zero out the upper triangular part of the
-         *    attention matrix A
-         * 2. Softmax normalization:  A[m,n] -> e[m,n] / sum_m(e[m,n])  with
-         *                            e[m,n] := exp(A[m,n]-max(A[m,:]))
-         * TODO: implement "flash attention": tile the computation of A=Q*(K^T)
-         *   into smaller row blocks of Q + column blocs of K^T without storing
-         *   the full attention matrix A and run an "online" softmax
-         *   normalization that doesn't need a full row of A to find the row's
-         *   max value */
-        for (auto m = decltype(nx){0}; m < nx; ++m) {
-                  double *attention_m = &attention[m*nx];
-            /* Restrict the maximum to the causal (i.e., lower-diagonal) part
-             * of the attention matrix                                          */
-            const double  attention_m_max = *std::max_element(attention_m, attention_m + m + 1);
-                  double  sum_exp = 0.0; 
-
-            for (auto n = decltype(nx){0}; n <= m; ++n) {
-                attention_m[n] = std::exp(attention_m[n] - attention_m_max);
-                sum_exp       += attention_m[n];
+                for (auto i = decltype(DIM){0}; i < DIM; ++i) {
+                    const auto mi = idx_m + i;
+                    x[mi] = sqrt_dim*vocab_embeddings[idx_vocab + i] + pos_embeddings[mi];
+                }
             }
 
-            const double inv_sum_exp = 1.0/sum_exp;
 
-            for (auto n = decltype(nx){0}; n <= m; ++n) {
-                attention_m[n] *= inv_sum_exp;
-            }
-
-            for (auto n = decltype(nx){m+1}; n < nx; ++n) {
-                attention_m[n] = 0.0;
-            }
-        }
+            // TODO: dropout of 'x' without any skip connections
 
 
-        /* ----------------------------
-         * context = attention * values
-         * ----------------------------
-         * - attention: nx*nx
-         * - values:    nx*DIM
-         * - context    nx*DIM */
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
-            nx, DIM, nx, 1.0, attention.data(), nx, values.data(), DIM,
-            0.0, context.data(), DIM);
+            /* ----------------------------
+             * Layer normalization #1 (LN1)
+             * ----------------------------
+             * Rescale the each input embedding vector so that its components
+             * average out to 0 and have variance 1, but then scale and shift them
+             * by trainable parameters, to make training more stable.
+             *   ***** The input changes: x -> x1 ***** */
+            layer_norm(x, scale1, shift1, xhat1, sigmas_inv1);
+            x1 = x;
 
-        /* ---------------------------------------------------------------
-         * Dropout plus skip/shortcut connection between the input and the
-         * context
-         * ---------------------------------------------------------------
-         * - DROPOUT: randomly set some of the components of the context vectors
-         *    to zero to avoid having the model overly rely on a few components
-         *    during training. On the other hand, components which are not set
-         *    to zero must be rescaled so as to keep the expectation value over
-         *    the context vector constant.
-         * - SHORTCUT CONNECTION: add the context vectors to the corresponding
-         *    input vectors to preserve the quality of the gradient flow during
-         *    the backward step.
-         *   ***** The input changes: x1 -> x1skip ***** */
-        skip_conn_dropout(x, context, udist, gen);
-
-        /* ----------------------------
-         * Layer normalization #2 (LN2)
-         * ----------------------------
-         *   ***** The input changes: x1skip -> x2 *****
-         * NOTE: save the inputs at this stage to avoid rebuilding them during
-         *       the backward pass */
-        layer_norm(x, scale2, shift2, xhat2, sigmas_inv2);
-        x2 = x;
-
-
-        /* -----------------------------------------------------------
-         * Expanding-contracting two-layer feed-forward neural network
-         *     FFN(x) = (GELU(x*W1 + b1))*W2 + b2
-         * ----------------------------------------------------------- */
-        /* STEP 1: ffn_h = x*ffn_W1 + / [ffn_b1] \ |
-                                      |   ...    | | dim_ffn_expanded times
-                                      \ [ffn_b1] / |
-         * - x:      nx*DIM
-         * - ffn_W1: DIM*(DIM*FFN_EXPANSION_FACTOR) = DIM*dim_ffn_expanded
-         * - ffn_h:  nx*dim_ffn_expanded */
-        for (auto m = decltype(nx){0}; m < nx; ++m) {
-            std::copy(ffn_b1.begin(), ffn_b1.end(), ffn_h.begin() + m*dim_ffn_expanded);
-        }
-
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
-            nx, dim_ffn_expanded, DIM, 1.0, x.data(), DIM, ffn_W1.data(), dim_ffn_expanded,
-            1.0, ffn_h.data(), dim_ffn_expanded);
-
-        /* STEP 2: take (an approximation of) GELU(ffn_h)
-         * NOTE: derivative of pre-GELU inputs needed for the backward pass */
-        constexpr double sqrt_2_over_pi = std::sqrt(2.0/M_PI);
-        constexpr double a              = 0.044715;
-
-        for (auto idx = decltype(nxdim_expanded){0}; idx < nxdim_expanded; ++idx) {
-            auto &z = ffn_h[idx];
-            const auto az2 = a*z*z;
-            const auto sqrt_2_over_pi_z = sqrt_2_over_pi*z;
-            const auto th   = tanh(sqrt_2_over_pi_z*(1.0 + az2));
-            const auto thp1 = th + 1.0;
-
-            z *= 0.5*thp1;
-            ffn_h_prime[idx] = 0.5*(thp1 + sqrt_2_over_pi_z*(1.0 + 3.0*az2)*(1.0 - th*th));
-        }
-
-        /* STEP 3: ffn_out = ffn_h*ffn_W2 + / [ffn_b2] \ |
-                                            |   ...    | | DIM times
-                                            \ [ffn_b2] / |
-         * - ffn_h:  nx*dim_ffn_expanded
-         * - ffn_W2: (DIM*FFN_EXPANSION_FACTOR)*DIM = dim_ffn_expanded*DIM
-         * - ffn_out: nx*DIM */
-        for (auto m = decltype(nx){0}; m < nx; ++m) {
-            std::copy(ffn_b2.begin(), ffn_b2.end(), ffn_out.begin() + m*DIM);
-        }
-
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
-            nx, DIM, dim_ffn_expanded, 1.0, ffn_h.data(), dim_ffn_expanded, ffn_W2.data(), DIM,
-            1.0, ffn_out.data(), DIM);
-
-
-        /* --------------------------------------------------------------------
-         * Dropout plus skip/shortcut connection between the network output and
-         * the input
-         * --------------------------------------------------------------------
-         *   ***** The input changes: x2 -> x2skip ***** */
-        skip_conn_dropout(x, ffn_out, udist, gen);
-
-        /* ----------------------------
-         * Layer normalization #3 (LN3)
-         * ---------------------------- */
-        layer_norm(x, scale3, shift3, xhat3, sigmas_inv3);
-
-
-        /* -------------------------------------------------------------
-         * logits = x*logits_W + / [logits_b] \ |
-         *                       | [logits_b] | | nv times
-         *                       \ [logits_b] / |
-         * NOTE: logits_W = vocab_embeddings^T if weight tying is active
-         * -------------------------------------------------------------
-         * - x:        nx*DIM
-         * - logits_W: DIM*nv
-         * - logits:   nx*nv */
-        for (auto m = decltype(nx){0}; m < nx; ++m) {
-            std::copy(logits_b.begin(), logits_b.end(), logits.begin() + m*nv);
-        }
-
-        if constexpr (WEIGHT_TYING) {
-            cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
-                nx, nv, DIM, 1.0, x.data(), DIM, vocab_embeddings.data(), DIM,
-                1.0, logits.data(), nv);
-        } else {
+            /* ----------------
+             * - queries = x*Wq
+             * -    keys = x*Wk
+             * -  values = x*Wv
+             * ----------------
+             * - x:          cw*DIM
+             * - Wq, Wk, Wv: DIM*DIM
+             * - queries, keys, values: cw*DIM */
             cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
-                nx, nv, DIM, 1.0, x.data(), DIM, logits_W.data(), nv,
-                1.0, logits.data(), nv);
-        }
-
-
-        // XXX XXX XXX XXX XXX XXX
-        // XXX XXX XXX XXX XXX XXX
-        // XXX XXX XXX XXX XXX XXX
-        /* XXX: softmax is not really needed now because it doesn't change which
-         *   logit is the largest (and so it doesn't change the next predicted
-         *   token). However, we'll later introduce some variability, whereby
-         *   the next predicted token is not the one corresponding to the
-         *   largest logit, and softmax will be useful then. */
-        //softmax(last_logits);  // XXX: last_logits_defined below
-        // XXX XXX XXX XXX XXX XXX
-        // XXX XXX XXX XXX XXX XXX
-        // XXX XXX XXX XXX XXX XXX
-
-
-
-        /* *************
-         * Backward pass
-         * ************* */
-        /* Compute the cross-entropy loss between the input and the target
-         * tokens, where the "target" token of each input token is just the next
-         * input token. Meanwhile, accumulate the terms needed to later
-         * calculate the gradients of the loss wrt the logits' weights and
-         * biases. */
-        double loss = 0.0;
-
-        fill(d_ffn_b1.begin(), d_ffn_b1.end(), 0.0);
-        fill(d_ffn_b2.begin(), d_ffn_b2.end(), 0.0);
-
-        fill(d_scale1.begin(), d_scale1.end(), 0.0);
-        fill(d_scale2.begin(), d_scale2.end(), 0.0);
-        fill(d_scale3.begin(), d_scale3.end(), 0.0);
-
-        fill(d_shift1.begin(), d_shift1.end(), 0.0);
-        fill(d_shift2.begin(), d_shift2.end(), 0.0);
-        fill(d_shift3.begin(), d_shift3.end(), 0.0);
-
-        fill(d_logits_b.begin(), d_logits_b.end(), 0.0);
-
-
-        /* ------------------------------------------------------
-         * 1. Compute the loss function and build
-         *    probs^m_v = dL^m / dlogits^m_v =
-         *  = softmax(logits)^m_v - delta_{v, v_next_input_token}
-         * ------------------------------------------------------ */
-        for (auto m = decltype(nx){0}; m < nx - 1; ++m) {
-            const auto idx_m_vocab = m*nv;
-
-                  double *logits_m     = &logits[idx_m_vocab];
-            const double  logits_m_max = *std::max_element(logits_m, logits_m + nv);
-                  double  sum_exp_m    = 0.0;
-
-            for (auto v = decltype(nv){0}; v < nv; ++v) {
-                const auto mv       = idx_m_vocab + v;
-                const auto exp_term = std::exp(logits[mv] - logits_m_max);
-                probs[mv]  = exp_term;  // NOTE: not yet normalized by sum_exp_m
-                sum_exp_m += exp_term;
-            }
-
-            /* Add the loss term for the current input token
-             * NOTE: letting
-             *   z[m][v+1] = logits[idx_m_vocab + ids_input[m+1])
-             *   be the logit corresponding to the next input token, the
-             *   expression below is equivalent to
-             *
-             *       -log(exp(z[m][v+1] - logits_m_max)) + log_sum_exp_m  =
-             *   = -( log(exp(z[m][v+1] - logits_m_max)) - log_sum_exp_m) =
-             *   = -log( (exp(z[m][v+1] - logits_m_max)) / sum_exp_m) ,
-             *
-             *  which implicitly applies softmax normalization to each logit to
-             *  convert it into a probability */
-            const auto next_input_id = ids_input[m+1];
-            loss += -(logits[idx_m_vocab + next_input_id] - logits_m_max) + std::log(sum_exp_m);
-
-
-            /* Normalize the softmax probabilities for each logit in the logits
-             * vector for the current input token (i.e., for the current m
-             * index) and accumulate the loss' gradients wrt the logits' weights
-             * and biases and wrt the final inputs */
-            const double sum_exp_m_inv = 1.0/sum_exp_m;
-
-            for (auto v = decltype(nv){0}; v < nv; ++v) {
-                probs[idx_m_vocab + v] *= sum_exp_m_inv;
-            }
-
-            probs[idx_m_vocab + next_input_id] -= 1.0;
-
-            // Accumulate the loss' gradient wrt to the logits' weights
-            for (auto v = decltype(nv){0}; v < nv; ++v) {
-                const auto probs_mv = probs[idx_m_vocab + v];
-                d_logits_b[v] += probs_mv;
-            }
-        }
-
-
-        /* -------------------------------------------------------------
-         * 2. Without weight tying: dL/d_logits_W         = x3^T * probs
-         *    With    weight tying: dL/d_vocab_embeddings = probs^T * x3
-         * -------------------------------------------------------------
-         * - x3:         nx*DIM
-         * - probs:      nx*nv
-         * - d_logits_W: DIM*nv without weight tying, nv*DIM otherwise
-         * NOTE: `x` holds the input tokens after LN3, so it really is `x3`
-         * NOTE: `probs` should technically have dimensions (nx-1)*nv, but we
-         *       allocate it as nx*nv and set its last row to zero to make use
-         *       of cblas_dgemm
-         * NOTE: d_logits_W is really "d_vocab_embeddings" if weight tying is
-         *       active */
-        std::fill(probs.begin() + (nx-1)*nv, probs.end(), 0.0);
-
-        if constexpr (WEIGHT_TYING) {
-            cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
-                        nv, DIM, nx, 1.0, probs.data(), nv, x.data(), DIM,
-                        0.0, d_logits_W.data(), DIM);
-        } else {
-            cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
-                        DIM, nv, nx, 1.0, x.data(), DIM, probs.data(), nv,
-                        0.0, d_logits_W.data(), nv);
-        }
-
-
-        /* -----------------------------------
-         * 3. dx = dL_dx3 = probs * logits_W^T
-         * -----------------------------------
-         * - probs:    nx*nv
-         * - logits_W: DIM*nv
-         * - dx = dx3: nx*DIM
-         * NOTE: logits_W = vocab_embeddings^T if weight tying is active */
-        if constexpr (WEIGHT_TYING) {
+                cw, DIM, DIM, 1.0, x.data(), DIM, Wq.data(), DIM,
+                0.0, queries.data(), DIM);
             cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
-                        nx, DIM, nv, 1.0, probs.data(), nv, vocab_embeddings.data(), DIM,
-                        0.0, dx.data(), DIM);
-        } else {
+                cw, DIM, DIM, 1.0, x.data(), DIM, Wk.data(), DIM,
+                0.0, keys.data(), DIM);
+            cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                cw, DIM, DIM, 1.0, x.data(), DIM, Wv.data(), DIM,
+                0.0, values.data(), DIM);
+
+            /* --------------------------------------------
+             * attention = (1/sqrt(DIM)) * queries * keys^T
+             * --------------------------------------------
+             * - queries:   cw*DIM
+             * - keys^T:    DIM*cw
+             * - attention: cw*cw
+             * TODO: allow for multi-head attention; need to swap
+             *   nds_input<->nheads to allow parallelization by head. Then the
+             *   normalization factor will become 1/sqrt(DIM_OUT/nheads) */
             cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
-                        nx, DIM, nv, 1.0, probs.data(), nv, logits_W.data(), nv,
-                        0.0, dx.data(), DIM);
-        }
+                cw, cw, DIM, sqrt_dim_inv, queries.data(), DIM, keys.data(), DIM,
+                0.0, attention.data(), cw);
 
 
-        /* ---------------------------------------------------------------
-         * 4. Backward LN3, dL/d_ffn_b2, and dL/dx2 [skip connection path]
-         * --------------------------------------------------------------- */
-        for (auto m = decltype(nx){0}; m < nx - 1; ++m) {
-            const auto idx_m      = m*DIM;
-            double u3_m_sum       = 0.0;
-            double u3_xhat3_m_sum = 0.0;
+            /* ----------------------------------------------------
+             * Causal attention + softmax normalization (in one go)
+             * ----------------------------------------------------
+             * 1. Causal attention: zero out the upper triangular part of the
+             *    attention matrix A
+             * 2. Softmax normalization:  A[m,n] -> e[m,n] / sum_m(e[m,n])  with
+             *                            e[m,n] := exp(A[m,n]-max(A[m,:]))
+             * TODO: implement "flash attention": tile the computation of A=Q*(K^T)
+             *   into smaller row blocks of Q + column blocs of K^T without storing
+             *   the full attention matrix A and run an "online" softmax
+             *   normalization that doesn't need a full row of A to find the row's
+             *   max value */
+            for (auto m = decltype(cw){0}; m < cw; ++m) {
+                      double *attention_m = &attention[m*cw];
+                /* Restrict the maximum to the causal (i.e., lower-diagonal) part
+                 * of the attention matrix                                          */
+                const double  attention_m_max = *std::max_element(attention_m, attention_m + m + 1);
+                      double  sum_exp = 0.0;
 
-            for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-                const auto mi       = idx_m + i;
-                const auto dx3_mi   = dx[mi];
-                const auto xhat3_mi = xhat3[mi];
+                for (auto n = decltype(cw){0}; n <= m; ++n) {
+                    attention_m[n] = std::exp(attention_m[n] - attention_m_max);
+                    sum_exp       += attention_m[n];
+                }
 
-                d_shift3[i] += dx3_mi;
-                d_scale3[i] += dx3_mi*xhat3_mi;
+                const double inv_sum_exp = 1.0/sum_exp;
 
-                /* This could be saved to a buffer and reused in the next loop (*),
-                 * but a single multiplication is probably cheaper than a memory
-                 * access */
-                const auto u3_mi = dx3_mi*scale3[i];
-                u3_m_sum        += u3_mi;
-                u3_xhat3_m_sum  += u3_mi*xhat3_mi;
+                for (auto n = decltype(cw){0}; n <= m; ++n) {
+                    attention_m[n] *= inv_sum_exp;
+                }
+
+                for (auto n = decltype(cw){m+1}; n < cw; ++n) {
+                    attention_m[n] = 0.0;
+                }
             }
 
-            const auto sigma_inv3_m = sigmas_inv3[m];
 
-            for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-                const auto mi    = idx_m + i;
-                const auto u3_mi = dx[mi]*scale3[i];  // (*) HERE
+            /* ----------------------------
+             * context = attention * values
+             * ----------------------------
+             * - attention: cw*cw
+             * - values:    cw*DIM
+             * - context    cw*DIM */
+            cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                cw, DIM, cw, 1.0, attention.data(), cw, values.data(), DIM,
+                0.0, context.data(), DIM);
 
-                // Skip connection part of dL^m / dx2^m_i
-                const auto dx2_skipconn_mi = sigma_inv3_m*(
-                    u3_mi - (u3_m_sum + u3_xhat3_m_sum*xhat3[mi])*dim_inv);
+            /* ---------------------------------------------------------------
+             * Dropout plus skip/shortcut connection between the input and the
+             * context
+             * ---------------------------------------------------------------
+             * - DROPOUT: randomly set some of the components of the context vectors
+             *    to zero to avoid having the model overly rely on a few components
+             *    during training. On the other hand, components which are not set
+             *    to zero must be rescaled so as to keep the expectation value over
+             *    the context vector constant.
+             * - SHORTCUT CONNECTION: add the context vectors to the corresponding
+             *    input vectors to preserve the quality of the gradient flow during
+             *    the backward step.
+             *   ***** The input changes: x1 -> x1skip ***** */
+            skip_conn_dropout(x, context, udist, gen);
 
-                // NOTE: dx^m_i overwritten by dL^m / dx2skip^m_i
-                dx[mi]       = dx2_skipconn_mi;
-                d_ffn_b2[i] += dx2_skipconn_mi;
+            /* ----------------------------
+             * Layer normalization #2 (LN2)
+             * ----------------------------
+             *   ***** The input changes: x1skip -> x2 *****
+             * NOTE: save the inputs at this stage to avoid rebuilding them during
+             *       the backward pass */
+            layer_norm(x, scale2, shift2, xhat2, sigmas_inv2);
+            x2 = x;
+
+
+            /* -----------------------------------------------------------
+             * Expanding-contracting two-layer feed-forward neural network
+             *     FFN(x) = (GELU(x*W1 + b1))*W2 + b2
+             * ----------------------------------------------------------- */
+            /* STEP 1: ffn_h = x*ffn_W1 + / [ffn_b1] \ |
+             *                            |   ...    | | dim_ffn_expanded times
+             *                            \ [ffn_b1] / |
+             * - x:      cw*DIM
+             * - ffn_W1: DIM*(DIM*FFN_EXPANSION_FACTOR) = DIM*dim_ffn_expanded
+             * - ffn_h:  cw*dim_ffn_expanded */
+            for (auto m = decltype(cw){0}; m < cw; ++m) {
+                std::copy(ffn_b1.begin(), ffn_b1.end(), ffn_h.begin() + m*dim_ffn_expanded);
             }
-        }
+
+            cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                cw, dim_ffn_expanded, DIM, 1.0, x.data(), DIM, ffn_W1.data(), dim_ffn_expanded,
+                1.0, ffn_h.data(), dim_ffn_expanded);
+
+            /* STEP 2: take (an approximation of) GELU(ffn_h)
+             * NOTE: derivative of pre-GELU inputs needed for the backward pass */
+            for (auto idx = decltype(cwdim_expanded){0}; idx < cwdim_expanded; ++idx) {
+                auto &z = ffn_h[idx];
+                const auto az2 = gelu_a*z*z;
+                const auto sqrt_2_over_pi_z = sqrt_2_over_pi*z;
+                const auto th   = tanh(sqrt_2_over_pi_z*(1.0 + az2));
+                const auto thp1 = th + 1.0;
+
+                z *= 0.5*thp1;
+                ffn_h_prime[idx] = 0.5*(thp1 + sqrt_2_over_pi_z*(1.0 + 3.0*az2)*(1.0 - th*th));
+            }
+
+            /* STEP 3: ffn_out = ffn_h*ffn_W2 + / [ffn_b2] \ |
+             *                                  |   ...    | | DIM times
+             *                                  \ [ffn_b2] / |
+             * - ffn_h:  cw*dim_ffn_expanded
+             * - ffn_W2: (DIM*FFN_EXPANSION_FACTOR)*DIM = dim_ffn_expanded*DIM
+             * - ffn_out: cw*DIM */
+            for (auto m = decltype(cw){0}; m < cw; ++m) {
+                std::copy(ffn_b2.begin(), ffn_b2.end(), ffn_out.begin() + m*DIM);
+            }
+
+            cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                cw, DIM, dim_ffn_expanded, 1.0, ffn_h.data(), dim_ffn_expanded, ffn_W2.data(), DIM,
+                1.0, ffn_out.data(), DIM);
 
 
-        /* --------------------------------------------
-         * 5. dL/dFFN_W2 = d_ffn_W2 = ffn_h^T * dx2skip
-         * --------------------------------------------
-         * - ffn_h:        nx * dim_ffn_expanded  = nx * (FFN_EXPANSION_FACTOR * DIM)
-         * - dx = dx2skip: nx * DIM
-         * - d_ffn_W2:     dim_ffn_expanded * DIM = (FFN_EXPANSION_FACTOR * DIM) * DIM
-         * NOTE: dx now holds dx2skip (overwritten in the loop above) */
-        cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
-                    dim_ffn_expanded, DIM, nx, 1.0, ffn_h.data(), dim_ffn_expanded, dx.data(), DIM,
-                    0.0, d_ffn_W2.data(), DIM);
+            /* --------------------------------------------------------------------
+             * Dropout plus skip/shortcut connection between the network output and
+             * the input
+             * --------------------------------------------------------------------
+             *   ***** The input changes: x2 -> x2skip ***** */
+            skip_conn_dropout(x, ffn_out, udist, gen);
+
+            /* ----------------------------
+             * Layer normalization #3 (LN3)
+             * ---------------------------- */
+            layer_norm(x, scale3, shift3, xhat3, sigmas_inv3);
 
 
-        /* ------------------------------------------------------
-         * 6. dz^m_r = (dx2skip * ffn_W2^T)^m_r * ffn_h_prime^m_r
-         * ------------------------------------------------------
-         * - dx = dx2skip: nx * DIM
-         * - ffn_W2:       dim_ffn_expanded * DIM = (FFN_EXPANSION_FACTOR * DIM) * DIM
-         * - dz:           nx * dim_ffn_expanded  = nx * (FFN_EXPANSION_FACTOR * DIM)
-         * NOTE: dx now holds dx2skip (overwritten in the loop above) */
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
-                    nx, dim_ffn_expanded, DIM, 1.0, dx.data(), DIM, ffn_W2.data(), DIM,
-                    0.0, dz.data(), dim_ffn_expanded);
+            /* -------------------------------------------------------------
+             * logits = x*logits_W + / [logits_b] \ |
+             *                       | [logits_b] | | nv times
+             *                       \ [logits_b] / |
+             * NOTE: logits_W = vocab_embeddings^T if weight tying is active
+             * -------------------------------------------------------------
+             * - x:        cw*DIM
+             * - logits_W: DIM*nv
+             * - logits:   cw*nv */
+            for (auto m = decltype(cw){0}; m < cw; ++m) {
+                std::copy(logits_b.begin(), logits_b.end(), logits.begin() + m*nv);
+            }
 
-        for (auto idx = decltype(nxdim_expanded){0}; idx < nxdim_expanded; ++idx) {
-            dz[idx] *= ffn_h_prime[idx];
-        }
+            if constexpr (WEIGHT_TYING) {
+                cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                    cw, nv, DIM, 1.0, x.data(), DIM, vocab_embeddings.data(), DIM,
+                    1.0, logits.data(), nv);
+            } else {
+                cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                    cw, nv, DIM, 1.0, x.data(), DIM, logits_W.data(), nv,
+                    1.0, logits.data(), nv);
+            }
 
 
-        /* ---------------------------
-         * 7. Backward FFN first layer
-         * --------------------------- */
-        for (auto m = decltype(nx){0}; m < nx - 1; ++m) {
-            const auto idx_m_exp = m*dim_ffn_expanded;
+            // XXX XXX XXX XXX XXX XXX
+            // XXX XXX XXX XXX XXX XXX
+            // XXX XXX XXX XXX XXX XXX
+            /* XXX: softmax is not really needed now because it doesn't change which
+             *   logit is the largest (and so it doesn't change the next predicted
+             *   token). However, we'll later introduce some variability, whereby
+             *   the next predicted token is not the one corresponding to the
+             *   largest logit, and softmax will be useful then. */
+            //softmax(last_logits);  // XXX: last_logits defined below
+            // XXX XXX XXX XXX XXX XXX
+            // XXX XXX XXX XXX XXX XXX
+            // XXX XXX XXX XXX XXX XXX
+
+
+
+            /* *************
+             * Backward pass
+             * ************* */
+            /* Compute the cross-entropy loss between the input and the target
+             * tokens, where the "target" token of each input token is just the next
+             * input token. Meanwhile, accumulate the terms needed to later
+             * calculate the gradients of the loss wrt the logits' weights and
+             * biases. */
+            double sequence_loss = 0.0;
+
+            fill(d_ffn_b1.begin(), d_ffn_b1.end(), 0.0);
+            fill(d_ffn_b2.begin(), d_ffn_b2.end(), 0.0);
+
+            fill(d_scale1.begin(), d_scale1.end(), 0.0);
+            fill(d_scale2.begin(), d_scale2.end(), 0.0);
+            fill(d_scale3.begin(), d_scale3.end(), 0.0);
+
+            fill(d_shift1.begin(), d_shift1.end(), 0.0);
+            fill(d_shift2.begin(), d_shift2.end(), 0.0);
+            fill(d_shift3.begin(), d_shift3.end(), 0.0);
+
+            fill(d_logits_b.begin(), d_logits_b.end(), 0.0);
+
+
+            /* --------------------------------------------------------------
+             * 1. Compute the loss function for the current training sequence
+             *    and build
+             *      probs^m_v = dL^m / dlogits^m_v =
+             *    = softmax(logits)^m_v - delta_{v, v_next_input_token}
+             * -------------------------------------------------------------- */
+            for (auto m = decltype(cw){0}; m < cw - 1; ++m) {
+                const auto idx_m_vocab = m*nv;
+
+                      double *logits_m     = &logits[idx_m_vocab];
+                const double  logits_m_max = *std::max_element(logits_m, logits_m + nv);
+                      double  sum_exp_m    = 0.0;
+
+                for (auto v = decltype(nv){0}; v < nv; ++v) {
+                    const auto mv       = idx_m_vocab + v;
+                    const auto exp_term = std::exp(logits[mv] - logits_m_max);
+                    probs[mv]  = exp_term;  // NOTE: not yet normalized by sum_exp_m
+                    sum_exp_m += exp_term;
+                }
+
+                /* Add the loss term for the current training token
+                 * NOTE: letting
+                 *   z[m][v+1] = logits[idx_m_vocab + ids_input[m+1])
+                 *   be the logit corresponding to the next input token, the
+                 *   expression below is equivalent to
+                 *
+                 *       -log(exp(z[m][v+1] - logits_m_max)) + log_sum_exp_m  =
+                 *   = -( log(exp(z[m][v+1] - logits_m_max)) - log_sum_exp_m) =
+                 *   = -log( (exp(z[m][v+1] - logits_m_max)) / sum_exp_m) ,
+                 *
+                 *  which implicitly applies softmax normalization to each logit to
+                 *  convert it into a probability */
+                const auto next_token_id = ids_train_shifted[m+1];
+                sequence_loss += -(logits[idx_m_vocab + next_token_id] - logits_m_max) + std::log(sum_exp_m);
+
+
+                /* Normalize the softmax probabilities for each logit in the logits
+                 * vector for the current input token (i.e., for the current m
+                 * index) and accumulate the loss' gradients wrt the logits' weights
+                 * and biases and wrt the final inputs */
+                const double sum_exp_m_inv = 1.0/sum_exp_m;
+
+                for (auto v = decltype(nv){0}; v < nv; ++v) {
+                    probs[idx_m_vocab + v] *= sum_exp_m_inv;
+                }
+
+                probs[idx_m_vocab + next_token_id] -= 1.0;
+
+                // Accumulate the loss' gradient wrt to the logits' weights
+                for (auto v = decltype(nv){0}; v < nv; ++v) {
+                    const auto probs_mv = probs[idx_m_vocab + v];
+                    d_logits_b[v] += probs_mv;
+                }
+            }
+
+
+            /* -------------------------------------------------------------
+             * 2. Without weight tying: dL/d_logits_W         = x3^T * probs
+             *    With    weight tying: dL/d_vocab_embeddings = probs^T * x3
+             * -------------------------------------------------------------
+             * - x3:         cw*DIM
+             * - probs:      cw*nv
+             * - d_logits_W: DIM*nv without weight tying, nv*DIM otherwise
+             * NOTE: `x` holds the input tokens after LN3, so it really is `x3`
+             * NOTE: `probs` should technically have dimensions (cw-1)*nv, but we
+             *       allocate it as cw*nv and set its last row to zero to make use
+             *       of cblas_dgemm
+             * NOTE: d_logits_W is really "d_vocab_embeddings" if weight tying is
+             *       active */
+            std::fill(probs.begin() + (cw-1)*nv, probs.end(), 0.0);
+
+            if constexpr (WEIGHT_TYING) {
+                cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                            nv, DIM, cw, 1.0, probs.data(), nv, x.data(), DIM,
+                            0.0, d_logits_W.data(), DIM);
+            } else {
+                cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                            DIM, nv, cw, 1.0, x.data(), DIM, probs.data(), nv,
+                            0.0, d_logits_W.data(), nv);
+            }
+
+
+            /* -----------------------------------
+             * 3. dx = dL_dx3 = probs * logits_W^T
+             * -----------------------------------
+             * - probs:    cw*nv
+             * - logits_W: DIM*nv
+             * - dx = dx3: cw*DIM
+             * NOTE: logits_W = vocab_embeddings^T if weight tying is active */
+            if constexpr (WEIGHT_TYING) {
+                cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                            cw, DIM, nv, 1.0, probs.data(), nv, vocab_embeddings.data(), DIM,
+                            0.0, dx.data(), DIM);
+            } else {
+                cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                            cw, DIM, nv, 1.0, probs.data(), nv, logits_W.data(), nv,
+                            0.0, dx.data(), DIM);
+            }
+
+
+            /* ---------------------------------------------------------------
+             * 4. Backward LN3, dL/d_ffn_b2, and dL/dx2 [skip connection path]
+             * --------------------------------------------------------------- */
+            for (auto m = decltype(cw){0}; m < cw - 1; ++m) {
+                const auto idx_m      = m*DIM;
+                double u3_m_sum       = 0.0;
+                double u3_xhat3_m_sum = 0.0;
+
+                for (auto i = decltype(DIM){0}; i < DIM; ++i) {
+                    const auto mi       = idx_m + i;
+                    const auto dx3_mi   = dx[mi];
+                    const auto xhat3_mi = xhat3[mi];
+
+                    d_shift3[i] += dx3_mi;
+                    d_scale3[i] += dx3_mi*xhat3_mi;
+
+                    /* This could be saved to a buffer and reused in the next loop (*),
+                     * but a single multiplication is probably cheaper than a memory
+                     * access */
+                    const auto u3_mi = dx3_mi*scale3[i];
+                    u3_m_sum        += u3_mi;
+                    u3_xhat3_m_sum  += u3_mi*xhat3_mi;
+                }
+
+                const auto sigma_inv3_m = sigmas_inv3[m];
+
+                for (auto i = decltype(DIM){0}; i < DIM; ++i) {
+                    const auto mi    = idx_m + i;
+                    const auto u3_mi = dx[mi]*scale3[i];  // (*) HERE
+
+                    // Skip connection part of dL^m / dx2^m_i
+                    const auto dx2_skipconn_mi = sigma_inv3_m*(
+                        u3_mi - (u3_m_sum + u3_xhat3_m_sum*xhat3[mi])*dim_inv);
+
+                    // NOTE: dx^m_i overwritten by dL^m / dx2skip^m_i
+                    dx[mi]       = dx2_skipconn_mi;
+                    d_ffn_b2[i] += dx2_skipconn_mi;
+                }
+            }
+
+
+            /* --------------------------------------------
+             * 5. dL/dFFN_W2 = d_ffn_W2 = ffn_h^T * dx2skip
+             * --------------------------------------------
+             * - ffn_h:        cw * dim_ffn_expanded  = cw * (FFN_EXPANSION_FACTOR * DIM)
+             * - dx = dx2skip: cw * DIM
+             * - d_ffn_W2:     dim_ffn_expanded * DIM = (FFN_EXPANSION_FACTOR * DIM) * DIM
+             * NOTE: dx now holds dx2skip (overwritten in the loop above) */
+            cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                        dim_ffn_expanded, DIM, cw, 1.0, ffn_h.data(), dim_ffn_expanded, dx.data(), DIM,
+                        0.0, d_ffn_W2.data(), DIM);
+
+
+            /* ------------------------------------------------------
+             * 6. dz^m_r = (dx2skip * ffn_W2^T)^m_r * ffn_h_prime^m_r
+             * ------------------------------------------------------
+             * - dx = dx2skip: cw * DIM
+             * - ffn_W2:       dim_ffn_expanded * DIM = (FFN_EXPANSION_FACTOR * DIM) * DIM
+             * - dz:           cw * dim_ffn_expanded  = cw * (FFN_EXPANSION_FACTOR * DIM)
+             * NOTE: dx now holds dx2skip (overwritten in the loop above) */
+            cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                        cw, dim_ffn_expanded, DIM, 1.0, dx.data(), DIM, ffn_W2.data(), DIM,
+                        0.0, dz.data(), dim_ffn_expanded);
+
+            for (auto idx = decltype(cwdim_expanded){0}; idx < cwdim_expanded; ++idx) {
+                dz[idx] *= ffn_h_prime[idx];
+            }
+
+
+            /* ---------------------------
+             * 7. Backward FFN first layer
+             * --------------------------- */
+            for (auto m = decltype(cw){0}; m < cw - 1; ++m) {
+                const auto idx_m_exp = m*dim_ffn_expanded;
+                for (auto r = decltype(dim_ffn_expanded){0}; r < dim_ffn_expanded; ++r) {
+                    d_ffn_b1[r] += dz[idx_m_exp + r];
+                }
+            }
+
+            /* ***** dL/dFFN_W1 = d_ffn_W1 = x2^T * dz *****
+             * - x2:       cw * DIM
+             * - dz:       cw * dim_ffn_expanded  = cw * (FFN_EXPANSION_FACTOR * DIM)
+             * - d_ffn_W1: DIM * dim_ffn_expanded */
+            cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                        DIM, dim_ffn_expanded, cw, 1.0, x2.data(), DIM, dz.data(), dim_ffn_expanded,
+                        0.0, d_ffn_W1.data(), dim_ffn_expanded);
+
+
+            /* ------------------------------------------------------------------
+             * dL/dx2 [total] = dL/dx2 [skip connection path] + dL/dx2 [FFN path]
+             * ------------------------------------------------------------------ */
+            /* ***** dL/dx2 [FFN path] = dz * ffn_W1^T *****
+             * - dz:             cw * dim_ffn_expanded = cw * (FFN_EXPANSION_FACTOR * DIM)
+             * - ffn_W1:        DIM * dim_ffn_expanded
+             * - dx = dx2 [FFN]: cw * DIM
+             * NOTE: dx now holds dL/dx2 [total], note `1.0` before `dx.data()` */
+            cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                        cw, DIM, dim_ffn_expanded, 1.0, dz.data(), dim_ffn_expanded, ffn_W1.data(), dim_ffn_expanded,
+                        1.0, dx.data(), DIM);  // NOTE: `1.0` adds dz * ffn_W1^T to the old dx (dL/dx2 [skip connection path])
+
+
+            /* -------------------------------------------------
+             * 9. Backward LN2 and dL/dx1 [skip connection path]
+             * ------------------------------------------------- */
+            // NOTE: dx now holds dL/dx2 [total]
+            for (auto m = decltype(cw){0}; m < cw - 1; ++m) {
+                const auto idx_m      = m*DIM;
+                double u2_m_sum       = 0.0;
+                double u2_xhat2_m_sum = 0.0;
+
+                for (auto i = decltype(DIM){0}; i < DIM; ++i) {
+                    const auto mi       = idx_m + i;
+                    const auto dx2_mi   = dx[mi];
+                    const auto xhat2_mi = xhat2[mi];
+
+                    d_shift2[i] += dx2_mi;
+                    d_scale2[i] += dx2_mi*xhat2_mi;
+
+                    /* This could be saved to a buffer and reused in the next
+                     * loop (**), but a single multiplication is probably
+                     * cheaper than a memory access */
+                    const auto u2_mi = dx2_mi*scale2[i];
+                    u2_m_sum        += u2_mi;
+                    u2_xhat2_m_sum  += u2_mi*xhat2_mi;
+                }
+
+                const auto sigma_inv2_m = sigmas_inv2[m];
+
+                for (auto i = decltype(DIM){0}; i < DIM; ++i) {
+                    const auto mi    = idx_m + i;
+                    const auto u2_mi = dx[mi]*scale2[i];  // (**) HERE
+
+                    // Skip connection part of dL^m / dx1^m_i
+                    const auto dx1_skipconn_mi = sigma_inv2_m*(
+                        u2_mi - (u2_m_sum + u2_xhat2_m_sum*xhat2[mi])*dim_inv);
+
+                    // NOTE: dx^m_i overwritten by dL^m / dx1skip^m_i
+                    dx[mi] = dx1_skipconn_mi;
+                }
+            }
+
+
+            /* -----------------------------------------------
+             * 10. Backward context
+             *     a. dL/dA = dx1 [skip connection path] * V^T
+             *     b. dL/dV = A^T * dx1 [skip connection path]
+             * -----------------------------------------------
+             * a. - dx1 [skip] = dx: cw * DIM
+             *    - V = values:      cw * DIM
+             *    - dL/dA = dA:      cw * cw
+             * b. - A = attention:   cw * cw
+             *    - dx1 [skip] = dx: cw * DIM
+             *    - dL/dV = dV:      cw * DIM */
+             cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                         cw, cw, DIM, 1.0, dx.data(), DIM, values.data(), DIM,
+                         0.0, dA.data(), cw);
+             cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                         cw, DIM, cw, 1.0, attention.data(), cw, dx.data(), DIM,
+                         0.0, dV.data(), DIM);
+
+
+            /* -----------------------------------------
+             * 11. Backward attention softmax, per token
+             *     dS = dL/dS = dL/dA * dA/dS
+             * -----------------------------------------
+             * dS[m,n] = / A[m,n]*(dA[m,n] - sum_{p<=m} A[m,p]*dA[m,p])  (n <= m)
+             *           | 0                                             (n > m)
+             * NOTE: dS overwrites dA */
+             for (auto m = decltype(cw){0}; m < cw; ++m) {
+                 const auto    idx_m =  m*cw;
+                 const double *A_m   = &attention[idx_m];
+                       double *dA_m  = &dA[idx_m];
+                       double  dot   =  0.0;
+
+                 for (auto n = decltype(cw){0}; n <= m; ++n) {
+                     dot += A_m[n]*dA_m[n];
+                 }
+
+                 for (auto n = decltype(cw){0}; n <= m; ++n) {
+                     dA_m[n] = A_m[n]*(dA_m[n] - dot);
+                 }
+
+                 for (auto n = decltype(cw){m+1}; n < cw; ++n) {
+                     dA_m[n] = 0.0;
+                 }
+             }
+
+
+            /* --------------------------------------------
+             * 12. Backward query and key matrices
+             *     a. dL/dQ = (1/sqrt(DIM)) *  dL/dS    * K
+             *     b. dL/dK = (1/sqrt(DIM)) * (dL/dS)^T * Q
+             * --------------------------------------------
+             * a. - dL/dS = dS = dA:   cw * cw
+             *    - K = keys:          cw * DIM
+             *    - dL/dQ = dQ:        cw * DIM
+             * b. - dL/dS = dS = dA:   cw * cw
+             *    - Q = queries:       cw * DIM
+             *    - dL/dK = dK:        cw * DIM
+             * NOTE: dA now holds dS (see 11.) */
+            cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                        cw, DIM, cw, sqrt_dim_inv, dA.data(), cw, keys.data(), DIM,
+                        0.0, dQ.data(), DIM);
+            cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                        cw, DIM, cw, sqrt_dim_inv, dA.data(), cw, queries.data(), DIM,
+                        0.0, dK.data(), DIM);
+
+
+            /* ------------------------------------------
+             * 13. Backward query, key, and value weights
+             *     a. dL/dWq = x1^T * dQ
+             *     b. dL/dWk = x1^T * dK
+             *     c. dL/dWv = x1^T * dV
+             * ------------------------------------------
+             * - x1:             cw * DIM
+             * - dQ,  dK,  dV:   cw * DIM
+             * - dWq, dWk, dWv: DIM * DIM */
+            cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                        DIM, DIM, cw, 1.0, x1.data(), DIM, dQ.data(), DIM,
+                        0.0, dWq.data(), DIM);
+            cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                        DIM, DIM, cw, 1.0, x1.data(), DIM, dK.data(), DIM,
+                        0.0, dWk.data(), DIM);
+            cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
+                        DIM, DIM, cw, 1.0, x1.data(), DIM, dV.data(), DIM,
+                        0.0, dWv.data(), DIM);
+
+
+            /* -----------------------------------------------------------------
+             * 14. Backward x1
+             *     dL/dx1 = dL/dx1 [skip] + dL/dx1 [Q] + dL/dx1 [K] + dL/dx1 [V]
+             *     a. dL/dx1 [Q] = dQ * Wq^T
+             *     b. dL/dx1 [K] = dK * Wk^T
+             *     c. dL/dx1 [V] = dV * Wv^T
+             * -----------------------------------------------------------------
+             * NOTE: dx now holds dL/dx1 [skip connection path] ("dx1 [skip]") and
+             *       the result (dx1 [total]) is accumulated back into dx
+             * - dx1 [skip] = dx:  cw * DIM
+             * - dQ, dK, dV:       cw * DIM
+             * - Wq, Wk, Wv:      DIM * DIM */
+            cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                        cw, DIM, DIM, 1.0, dQ.data(), DIM, Wq.data(), DIM,
+                        1.0, dx.data(), DIM);  // 1.0 adds dQ * Wq^T to dx1 [skip]
+            cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                        cw, DIM, DIM, 1.0, dK.data(), DIM, Wk.data(), DIM,
+                        1.0, dx.data(), DIM);
+            cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
+                        cw, DIM, DIM, 1.0, dV.data(), DIM, Wv.data(), DIM,
+                        1.0, dx.data(), DIM);
+
+
+            /* ---------------------------
+             * 15. Backward LN1 and dL/dx0
+             * --------------------------- */
+            // NOTE: dx now holds dL/dx1 [total]
+            for (auto m = decltype(cw){0}; m < cw - 1; ++m) {
+                const auto idx_m = m*DIM;
+                double u1_m_sum       = 0.0;
+                double u1_xhat1_m_sum = 0.0;
+
+                for (auto i = decltype(DIM){0}; i < DIM; ++i) {
+                    const auto mi       = idx_m + i;
+                    const auto dx1_mi   = dx[mi];
+                    const auto xhat1_mi = xhat1[mi];
+
+                    d_shift1[i] += dx1_mi;
+                    d_scale1[i] += dx1_mi*xhat1_mi;
+
+                    /* This could be saved to a buffer and reused in the next
+                     * loop (***), but a single multiplication is probably
+                     * cheaper than a memory access */
+                    const auto u1_mi = dx1_mi*scale1[i];
+                    u1_m_sum        += u1_mi;
+                    u1_xhat1_m_sum  += u1_mi*xhat1_mi;
+                }
+
+                const auto sigma_inv1_m = sigmas_inv1[m];
+
+                // ids_train_shifted[m] = v, i.e., the vocabulary's row index
+                const auto idx_vocab = ids_train_shifted[m]*DIM;
+
+                for (auto i = decltype(DIM){0}; i < DIM; ++i) {
+                    const auto mi    = idx_m + i;
+                    const auto u1_mi = dx[mi]*scale1[i];  // (***) HERE
+
+                    const auto dx0_mi = sigma_inv1_m*(
+                        u1_mi - (u1_m_sum + u1_xhat1_m_sum*xhat1[mi])*dim_inv);
+
+                    /* Update the vocabulary and positional embedding vectors
+                     * directly without extra buffers */
+                    vocab_embeddings[idx_vocab + i] -= params_norm_fac_sqrt_dim*dx0_mi;
+                      pos_embeddings[mi]            -= params_norm_fac*dx0_mi;
+                }
+            }
+
+
+            /* -----------------------------
+             * Update the model's parameters
+             * ----------------------------- */
+            epoch_loss += sequence_loss;
+
+            for (auto v = decltype(nv){0}; v < nv; ++v) {
+                logits_b[v] -= params_norm_fac*d_logits_b[v];
+            }
+
+            if constexpr (WEIGHT_TYING) {
+                for (auto idx = decltype(nvdim){0}; idx < nvdim; ++idx) {
+                    vocab_embeddings[idx] -= params_norm_fac*d_logits_W[idx];
+                }
+            } else {
+                for (auto idx = decltype(nvdim){0}; idx < nvdim; ++idx) {
+                    logits_W[idx] -= params_norm_fac*d_logits_W[idx];
+                }
+            }
+
+            for (auto idx = decltype(dim_ffn_weights){0}; idx < dim_ffn_weights; ++idx) {
+                ffn_W1[idx] -= params_norm_fac*d_ffn_W1[idx];
+                ffn_W2[idx] -= params_norm_fac*d_ffn_W2[idx];
+            }
+
             for (auto r = decltype(dim_ffn_expanded){0}; r < dim_ffn_expanded; ++r) {
-                d_ffn_b1[r] += dz[idx_m_exp + r];
+                ffn_b1[r] -= params_norm_fac*d_ffn_b1[r];
             }
-        }
-
-        /* ***** dL/dFFN_W1 = d_ffn_W1 = x2^T * dz *****
-         * - x2:       nx * DIM
-         * - dz:       nx * dim_ffn_expanded  = nx * (FFN_EXPANSION_FACTOR * DIM)
-         * - d_ffn_W1: DIM * dim_ffn_expanded */
-        cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
-                    DIM, dim_ffn_expanded, nx, 1.0, x2.data(), DIM, dz.data(), dim_ffn_expanded,
-                    0.0, d_ffn_W1.data(), dim_ffn_expanded);
-
-
-        /* ------------------------------------------------------------------
-         * dL/dx2 [total] = dL/dx2 [skip connection path] + dL/dx2 [FFN path]
-         * ------------------------------------------------------------------ */
-        /* ***** dL/dx2 [FFN path] = dz * ffn_W1^T *****
-         * - dz:             nx * dim_ffn_expanded = nx * (FFN_EXPANSION_FACTOR * DIM)
-         * - ffn_W1:        DIM * dim_ffn_expanded
-         * - dx = dx2 [FFN]: nx * DIM
-         * NOTE: dx now holds dL/dx2 [total], note `1.0` before `dx.data()` */
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
-                    nx, DIM, dim_ffn_expanded, 1.0, dz.data(), dim_ffn_expanded, ffn_W1.data(), dim_ffn_expanded,
-                    1.0, dx.data(), DIM);  // NOTE: `1.0` adds dz * ffn_W1^T to the old dx (dL/dx2 [skip connection path]) 
-
-
-        /* -------------------------------------------------
-         * 9. Backward LN2 and dL/dx1 [skip connection path]
-         * ------------------------------------------------- */
-        // NOTE: dx now holds dL/dx2 [total]
-        for (auto m = decltype(nx){0}; m < nx - 1; ++m) {
-            const auto idx_m      = m*DIM;
-            double u2_m_sum       = 0.0;
-            double u2_xhat2_m_sum = 0.0;
 
             for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-                const auto mi       = idx_m + i;
-                const auto dx2_mi   = dx[mi];
-                const auto xhat2_mi = xhat2[mi];
+                ffn_b2[i] -= params_norm_fac*d_ffn_b2[i];
 
-                d_shift2[i] += dx2_mi;
-                d_scale2[i] += dx2_mi*xhat2_mi;
+                scale1[i] -= params_norm_fac*d_scale1[i];
+                scale2[i] -= params_norm_fac*d_scale2[i];
+                scale3[i] -= params_norm_fac*d_scale3[i];
 
-                /* This could be saved to a buffer and reused in the next loop (**),
-                 * but a single multiplication is probably cheaper than a memory
-                 * access */
-                const auto u2_mi = dx2_mi*scale2[i];
-                u2_m_sum        += u2_mi;
-                u2_xhat2_m_sum  += u2_mi*xhat2_mi;
+                shift1[i] -= params_norm_fac*d_shift1[i];
+                shift2[i] -= params_norm_fac*d_shift2[i];
+                shift3[i] -= params_norm_fac*d_shift3[i];
             }
 
-            const auto sigma_inv2_m = sigmas_inv2[m];
-
-            for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-                const auto mi    = idx_m + i;
-                const auto u2_mi = dx[mi]*scale2[i];  // (**) HERE
-
-                // Skip connection part of dL^m / dx1^m_i
-                const auto dx1_skipconn_mi = sigma_inv2_m*(
-                    u2_mi - (u2_m_sum + u2_xhat2_m_sum*xhat2[mi])*dim_inv);
-
-                // NOTE: dx^m_i overwritten by dL^m / dx1skip^m_i
-                dx[mi] = dx1_skipconn_mi;
-            }
-        }
-
-
-        /* -----------------------------------------------
-         * 10. Backward context
-         *     a. dL/dA = dx1 [skip connection path] * V^T
-         *     b. dL/dV = A^T * dx1 [skip connection path]
-         * -----------------------------------------------
-         * a. - dx1 [skip] = dx: nx * DIM
-         *    - V = values:      nx * DIM
-         *    - dL/dA = dA:      nx * nx
-         * b. - A = attention:   nx * nx
-         *    - dx1 [skip] = dx: nx * DIM
-         *    - dL/dV = dV:      nx * DIM */
-         cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
-                     nx, nx, DIM, 1.0, dx.data(), DIM, values.data(), DIM,
-                     0.0, dA.data(), nx);
-         cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
-                     nx, DIM, nx, 1.0, attention.data(), nx, dx.data(), DIM,
-                     0.0, dV.data(), DIM);
-
-
-        /* -----------------------------------------
-         * 11. Backward attention softmax, per token
-         *     dS = dL/dS = dL/dA * dA/dS
-         * -----------------------------------------
-         * dS[m,n] = / A[m,n]*(dA[m,n] - sum_{p<=m} A[m,p]*dA[m,p])  (n <= m)
-         *           | 0                                             (n > m)
-         * NOTE: dS overwrites dA */
-         for (auto m = decltype(nx){0}; m < nx; ++m) {
-             const auto    idx_m =  m*nx;
-             const double *A_m   = &attention[idx_m];
-                   double *dA_m  = &dA[idx_m];
-                   double  dot   =  0.0;
-
-             for (auto n = decltype(nx){0}; n <= m; ++n) {
-                 dot += A_m[n]*dA_m[n];
-             }
-
-             for (auto n = decltype(nx){0}; n <= m; ++n) {
-                 dA_m[n] = A_m[n]*(dA_m[n] - dot);
-             }
-
-             for (auto n = decltype(nx){m+1}; n < nx; ++n) {
-                 dA_m[n] = 0.0;
-             }
-         }
-
-
-        /* --------------------------------------------
-         * 12. Backward query and key matrices
-         *     a. dL/dQ = (1/sqrt(DIM)) *  dL/dS    * K
-         *     b. dL/dK = (1/sqrt(DIM)) * (dL/dS)^T * Q
-         * --------------------------------------------
-         * a. - dL/dS = dS = dA:   nx * nx
-         *    - K = keys:          nx * DIM
-         *    - dL/dQ = dQ:        nx * DIM
-         * b. - dL/dS = dS = dA:   nx * nx
-         *    - Q = queries:       nx * DIM
-         *    - dL/dK = dK:        nx * DIM
-         * NOTE: dA now holds dS (see 11.) */
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
-                    nx, DIM, nx, sqrt_dim_inv, dA.data(), nx, keys.data(), DIM,
-                    0.0, dQ.data(), DIM);
-        cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
-                    nx, DIM, nx, sqrt_dim_inv, dA.data(), nx, queries.data(), DIM,
-                    0.0, dK.data(), DIM);
-
-
-        /* ------------------------------------------
-         * 13. Backward query, key, and value weights
-         *     a. dL/dWq = x1^T * dQ
-         *     b. dL/dWk = x1^T * dK
-         *     c. dL/dWv = x1^T * dV
-         * ------------------------------------------
-         * - x1:             nx * DIM
-         * - dQ,  dK,  dV:   nx * DIM
-         * - dWq, dWk, dWv: DIM * DIM */
-        cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
-                    DIM, DIM, nx, 1.0, x1.data(), DIM, dQ.data(), DIM,
-                    0.0, dWq.data(), DIM);
-        cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
-                    DIM, DIM, nx, 1.0, x1.data(), DIM, dK.data(), DIM,
-                    0.0, dWk.data(), DIM);
-        cblas_dgemm(CblasRowMajor, CblasTrans, CblasNoTrans,
-                    DIM, DIM, nx, 1.0, x1.data(), DIM, dV.data(), DIM,
-                    0.0, dWv.data(), DIM);
-
-
-        /* -----------------------------------------------------------------
-         * 14. Backward x1
-         *     dL/dx1 = dL/dx1 [skip] + dL/dx1 [Q] + dL/dx1 [K] + dL/dx1 [V]
-         *     a. dL/dx1 [Q] = dQ * Wq^T
-         *     b. dL/dx1 [K] = dK * Wk^T
-         *     c. dL/dx1 [V] = dV * Wv^T
-         * -----------------------------------------------------------------
-         * NOTE: dx now holds dL/dx1 [skip connection path] ("dx1 [skip]") and
-         *       the result (dx1 [total]) is accumulated back into dx
-         * - dx1 [skip] = dx:  nx * DIM
-         * - dQ, dK, dV:       nx * DIM
-         * - Wq, Wk, Wv:      DIM * DIM */
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
-                    nx, DIM, DIM, 1.0, dQ.data(), DIM, Wq.data(), DIM,
-                    1.0, dx.data(), DIM);  // 1.0 adds dQ * Wq^T to dx1 [skip]
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
-                    nx, DIM, DIM, 1.0, dK.data(), DIM, Wk.data(), DIM,
-                    1.0, dx.data(), DIM);
-        cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
-                    nx, DIM, DIM, 1.0, dV.data(), DIM, Wv.data(), DIM,
-                    1.0, dx.data(), DIM);
-
-
-        /* ---------------------------
-         * 15. Backward LN1 and dL/dx0
-         * --------------------------- */
-        // NOTE: dx now holds dL/dx1 [total]
-        for (auto m = decltype(nx){0}; m < nx - 1; ++m) {
-            const auto idx_m = m*DIM;
-            double u1_m_sum       = 0.0;
-            double u1_xhat1_m_sum = 0.0;
-
-            for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-                const auto mi       = idx_m + i;
-                const auto dx1_mi   = dx[mi];
-                const auto xhat1_mi = xhat1[mi];
-
-                d_shift1[i] += dx1_mi;
-                d_scale1[i] += dx1_mi*xhat1_mi;
-
-                /* This could be saved to a buffer and reused in the next loop (***),
-                 * but a single multiplication is probably cheaper than a memory
-                 * access */
-                const auto u1_mi = dx1_mi*scale1[i];
-                u1_m_sum        += u1_mi;
-                u1_xhat1_m_sum  += u1_mi*xhat1_mi;
+            for (auto idx = decltype(dim_sq){0}; idx < dim_sq; ++idx) {
+                Wq[idx] -= params_norm_fac*dWq[idx];
+                Wk[idx] -= params_norm_fac*dWk[idx];
+                Wv[idx] -= params_norm_fac*dWv[idx];
             }
 
-            const auto sigma_inv1_m = sigmas_inv1[m];
+            //// XXX
+            //// Predict the next token
+            //const auto last_token_idx = nx*nv - nv;  // (nx-1)*nv
+            //std::vector<double> last_logits(nv);
+            //for (auto v = decltype(nv){0}; v < nv; ++v) {
+            //    last_logits[v] = logits[last_token_idx + v];
+            //}
+            //const auto new_id    = distance(last_logits.begin(), max_element(last_logits.begin(), last_logits.end()));
+            //const auto new_token = tokenizer.decode(std::vector<size_t>{new_id});
+            //std::cout << input_text << " " << new_token << std::endl;
+            //// XXX
+        }  // End of training sequence loop
 
-            // ids_input[m] = v, i.e., the vocabulary's row index
-            const auto idx_vocab = ids_input[m]*DIM;
-
-            for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-                const auto mi    = idx_m + i;
-                const auto u1_mi = dx[mi]*scale1[i];  // (***) HERE
-
-                const auto dx0_mi = sigma_inv1_m*(
-                    u1_mi - (u1_m_sum + u1_xhat1_m_sum*xhat1[mi])*dim_inv);
-
-                /* Update the vocabulary and positional embedding vectors
-                 * directly without extra buffers */
-                vocab_embeddings[idx_vocab + i] -= params_norm_fac_sqrt_dim*dx0_mi;
-                  pos_embeddings[mi]            -= params_norm_fac*dx0_mi;
-            }
-
-        }
-
-
-        /* ----------------------------------------------------------
-         * Compute the average loss and update the model's parameters
-         * ---------------------------------------------------------- */
-        loss *= loss_norm_fac;
-        loss_file << it << "\t" << loss << std::endl;
-
-        for (auto v = decltype(nv){0}; v < nv; ++v) {
-            logits_b[v] -= params_norm_fac*d_logits_b[v];
-        }
-
-        if constexpr (WEIGHT_TYING) {
-            for (auto idx = decltype(nvdim){0}; idx < nvdim; ++idx) {
-                vocab_embeddings[idx] -= params_norm_fac*d_logits_W[idx];
-            }
-        } else {
-            for (auto idx = decltype(nvdim){0}; idx < nvdim; ++idx) {
-                logits_W[idx] -= params_norm_fac*d_logits_W[idx];
-            }
-        }
-
-        for (auto idx = decltype(dim_ffn_weights){0}; idx < dim_ffn_weights; ++idx) {
-            ffn_W1[idx] -= params_norm_fac*d_ffn_W1[idx];
-            ffn_W2[idx] -= params_norm_fac*d_ffn_W2[idx];
-        }
-
-        for (auto r = decltype(dim_ffn_expanded){0}; r < dim_ffn_expanded; ++r) {
-            ffn_b1[r] -= params_norm_fac*d_ffn_b1[r];
-        }
-
-        for (auto i = decltype(DIM){0}; i < DIM; ++i) {
-            ffn_b2[i] -= params_norm_fac*d_ffn_b2[i];
-
-            scale1[i] -= params_norm_fac*d_scale1[i];
-            scale2[i] -= params_norm_fac*d_scale2[i];
-            scale3[i] -= params_norm_fac*d_scale3[i];
-
-            shift1[i] -= params_norm_fac*d_shift1[i];
-            shift2[i] -= params_norm_fac*d_shift2[i];
-            shift3[i] -= params_norm_fac*d_shift3[i];
-        }
-
-        for (auto idx = decltype(dim_sq){0}; idx < dim_sq; ++idx) {
-            Wq[idx] -= params_norm_fac*dWq[idx];
-            Wk[idx] -= params_norm_fac*dWk[idx];
-            Wv[idx] -= params_norm_fac*dWv[idx];
-        }
+        epoch_loss *= loss_norm_fac;
+        loss_file << epoch << "\t" << epoch_loss << std::endl;
 
         if constexpr (VERBOSE) {
-            std::cout << "Training epoch " << it << " completed" << std::endl;
+            std::cout << "INFO: Training epoch " << epoch << " completed" << std::endl;
         }
 
-        //// XXX
-        //// Predict the next token
-        //const auto last_token_idx = nx*nv - nv;  // (nx-1)*nv
-        //std::vector<double> last_logits(nv);
-        //for (auto v = decltype(nv){0}; v < nv; ++v) {
-        //    last_logits[v] = logits[last_token_idx + v];
-        //}
-        //const auto new_id    = distance(last_logits.begin(), max_element(last_logits.begin(), last_logits.end()));
-        //const auto new_token = tokenizer.decode(std::vector<size_t>{new_id});
-        //std::cout << input_text << " " << new_token << std::endl;
-        //// XXX
-    }
+    }  // End of training epochs loop
 
 
     const auto training_stop = std::chrono::steady_clock::now();

@@ -13,7 +13,7 @@
 //#define INPUT_FILE  "datasets/input/TokenizerTest2.txt"
 //#define INPUT_FILE  "datasets/input/LoremIpsum.txt"
 //#define INPUT_FILE  "datasets/input/Trump.txt"
-#define INPUT_FILE  "datasets/input/SentenceCompletion.txt"
+//#define INPUT_FILE  "datasets/input/SentenceCompletion.txt"
 
 /* ------------------------------------------------
  * File storing the loss function vs training epoch
@@ -34,7 +34,7 @@
 /* ------------------------------------------------------------------
  * Maximum vocabulary size for the byte-pair encoding (BPE) tokenizer
  * ------------------------------------------------------------------ */
-constexpr inline size_t BPE_MAX_VOCAB_SIZE = 200;
+constexpr inline size_t BPE_MAX_VOCAB_SIZE = 1000;
 
 /* -------------------------------------------------------------------------
  * 'end-of-word' character to be added to each word during the BPE training
@@ -45,16 +45,31 @@ constexpr inline size_t BPE_MAX_VOCAB_SIZE = 200;
 #define BPE_END_OF_WORD "@"
 
 
-/* ----------------------------------------
- * Number of training iterations ("epochs")
- * ---------------------------------------- */
-constexpr inline size_t NTRAIN = 10000;
+/* -------------------------
+ * Number of training epochs
+ * ------------------------- */
+constexpr inline size_t NEPOCHS = 1000;
+
+/* -----------------------------------------------------------------------------
+ * Context window, i.e., the number of token IDs the model can read, process,
+ * and remember at any given time. Training only sees these many tokens from the
+ * training text at once.
+ * -----------------------------------------------------------------------------*/
+constexpr inline size_t CONTEXT_WINDOW = 300;
+
+/* ---------------------------------------------------------------------------
+ * The context window shift by CONTEXT_STRIDE tokens through the training text
+ * - CONTEXT_STRIDE = 1                : max quality, but also max cost
+ * - CONTEXT_STRIDE = CONTEXT_WINDOW   : min quality, but also min cost
+ * - CONTEXT_STRIDE = CONTEXT_WINDOW/2 : balanced choice
+ * --------------------------------------------------------------------------- */
+constexpr inline size_t CONTEXT_STRIDE = CONTEXT_WINDOW/2;
 
 
 /* -------------------------
  * Token embedding dimension
  * ------------------------- */
-constexpr inline size_t DIM = 5;
+constexpr inline size_t DIM = 64;
 
 /* ------------------------------------------------------------------------
  * Expansion factor for the two-layer feed-forward neural network with GELU
@@ -66,7 +81,7 @@ constexpr inline size_t FFN_EXPANSION_FACTOR = 4;
  * If true, the model uses the vector embedding matrix as the logits weights.
  * TODO: comment on pros and cons
  * -------------------------------------------------------------------------- */
-constexpr inline bool WEIGHT_TYING = false;
+constexpr inline bool WEIGHT_TYING = true;
 
 
 /* -----------------------------------------------------------------------------
@@ -82,7 +97,7 @@ constexpr inline long long RANDOM_SEED = 123;
 /* -------------------------------------------------------------
  * Learning rate regulating the strength of the gradient descent
  * ------------------------------------------------------------- */
-constexpr inline double LEARNING_RATE = 0.02;
+constexpr inline double LEARNING_RATE = 2.0;
 
 /* ----------------------------------------------------------------
  * Regularize the variance of a token embedding vector during layer
@@ -100,11 +115,6 @@ constexpr inline double LN_EPSILON = 1.e-05;
 //constexpr inline double DROPOUT_PROB = 0.1;
 constexpr inline double DROPOUT_PROB = 0.0;
 
-/* -----------------------------------------------------------------------------
- * Context size, i.e., the number of token IDs used to predict the next token ID
- * during training
- * -----------------------------------------------------------------------------*/
-//#define CONTEXT_SIZE 5
 
 /* ---------
  * Verbosity

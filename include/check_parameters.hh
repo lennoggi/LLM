@@ -6,7 +6,9 @@
 static_assert(TOKENIZER == WORD or TOKENIZER == BPE);
 static_assert(BPE_MAX_VOCAB_SIZE > 0);
 
-static_assert(NTRAIN > 0);
+static_assert(NEPOCHS > 0);
+static_assert(CONTEXT_WINDOW > 0);
+static_assert(CONTEXT_STRIDE > 0 and CONTEXT_STRIDE <= CONTEXT_WINDOW);
 
 static_assert(DIM > 0);  // At least 2 for the variance of each token embedding vector to be well defined
 static_assert(FFN_EXPANSION_FACTOR > 0);
