@@ -97,7 +97,7 @@ constexpr inline long long RANDOM_SEED = 123;
 /* -------------------------------------------------------------
  * Learning rate regulating the strength of the gradient descent
  * ------------------------------------------------------------- */
-constexpr inline double LEARNING_RATE = 2.0;
+constexpr inline double LEARNING_RATE = 0.05;
 
 /* ----------------------------------------------------------------
  * Regularize the variance of a token embedding vector during layer

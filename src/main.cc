@@ -308,8 +308,8 @@ int main() {
     constexpr double sqrt_dim     = std::sqrt(static_cast<double>(DIM));
     constexpr double sqrt_dim_inv = 1.0/sqrt_dim;
 
-    const double   loss_norm_fac          = 1.0/static_cast<double>((cw-1)*start_ids_train.size());
-    const double params_norm_fac          = loss_norm_fac*LEARNING_RATE;
+    const double loss_norm_fac_epoch = 1.0/static_cast<double>((cw-1)*start_ids_train.size());  // Only used to log the loss
+    const double params_norm_fac     = LEARNING_RATE/static_cast<double>(cw-1);                 // Used for actual parameter update
     const double params_norm_fac_sqrt_dim = params_norm_fac*sqrt_dim;
 
     constexpr double sqrt_2_over_pi = std::sqrt(2.0/M_PI);
@@ -1043,7 +1043,7 @@ int main() {
             //// XXX
         }  // End of training sequence loop
 
-        epoch_loss *= loss_norm_fac;
+        epoch_loss *= loss_norm_fac_epoch;
         loss_file << epoch << "\t" << epoch_loss << std::endl;
 
         if constexpr (VERBOSE) {
