@@ -7,6 +7,7 @@ static_assert(TOKENIZER == WORD or TOKENIZER == BPE);
 static_assert(BPE_MAX_VOCAB_SIZE > 0);
 
 static_assert(NEPOCHS > 0);
+static_assert(VALIDATION_FRACTION > 0.0 and VALIDATION_FRACTION < 1.0);
 static_assert(CONTEXT_WINDOW > 0);
 static_assert(CONTEXT_STRIDE > 0 and CONTEXT_STRIDE <= CONTEXT_WINDOW);
 

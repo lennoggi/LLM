@@ -9,6 +9,7 @@
 /* -----------------------------
  * Input dataset to be processed
  * ----------------------------- */
+// TODO: use this as the prompt
 //#define INPUT_FILE  "datasets/input/TokenizerTest1.txt"
 //#define INPUT_FILE  "datasets/input/TokenizerTest2.txt"
 //#define INPUT_FILE  "datasets/input/LoremIpsum.txt"
@@ -49,6 +50,16 @@ constexpr inline size_t BPE_MAX_VOCAB_SIZE = 1000;
  * Number of training epochs
  * ------------------------- */
 constexpr inline size_t NEPOCHS = 1000;
+
+/* -----------------------------------------------------------------------------
+ * Fraction of the training text reserved to model validation rather than actual
+ * training. Must lie in (0,1), but it should ideally sit in [0.05, 0.2].
+ * NOTE: can't be exactly 0 nor 1: we always need both the training and the
+ *       validation subsets of the original text. Also, each subset must be
+ *       larger than the context window; this is enforced at runtime, once the
+ *       size of the training corpus is known.
+ * -----------------------------------------------------------------------------*/
+constexpr inline double VALIDATION_FRACTION = 0.1;
 
 /* -----------------------------------------------------------------------------
  * Context window, i.e., the number of token IDs the model can read, process,

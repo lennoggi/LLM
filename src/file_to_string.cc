@@ -1,6 +1,8 @@
 #include <sstream>
 #include <fstream>
 
+#include "functions.hh"
+
 std::string file_to_string(const std::string &filename) {
     std::ifstream file(filename, std::ifstream::in);
 

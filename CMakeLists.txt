@@ -14,6 +14,7 @@ add_executable(${EXE}
     src/layer_normalization.cc
     src/main.cc
     src/skip_connection_dropout.cc
+    src/transformer.cc
     src/word_tokenizer.cc
 )
 

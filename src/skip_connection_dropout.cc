@@ -2,7 +2,7 @@
 #include <random>
 #include <stdexcept>
 
-#include "declare_functions.hh"
+#include "functions.hh"
 #include "parameters.hh"
 
 
